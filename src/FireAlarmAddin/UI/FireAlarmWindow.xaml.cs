@@ -142,7 +142,11 @@ namespace FireAlarmAddin.UI
                 "  → jarak " + F(r.ActualSpacingY) + " m, tepi " + F(r.ActualSpacingY / 2) + " m\n" +
                 "Grid " + r.CountX + " × " + r.CountY + " = " + (r.CountX * r.CountY) +
                 (r.Removed.Count > 0 ? "\n" + r.Removed.Count + " titik di luar boundary otomatis dihapus → " + r.Quantity + " unit" : "");
-            TxtWarning.Text = r.Warning ?? "";
+            var warn = r.Warning ?? "";
+            if (heat && r.DesignSpacing < _smokeS)
+                warn += (warn.Length > 0 ? "\n" : "") + "Pada tinggi " + F(h) + " m, S heat tereduksi jadi " + F(r.DesignSpacing) +
+                        " m (< S smoke " + F(_smokeS) + " m), jadi heat detector butuh lebih banyak unit. Pertimbangkan smoke detector.";
+            TxtWarning.Text = warn;
             DrawPreview();
         }
 
