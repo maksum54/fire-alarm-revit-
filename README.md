@@ -17,9 +17,10 @@ Add-in Revit 2025 untuk menghitung jumlah **smoke / heat detector** per **Space*
 | Heat | 15 m | NFPA 72 Tabel 17.6.3.5.1 (3.05 m → 1.00, 3.66 → 0.91 … 9.14 → 0.34) |
 
 - Jarak detector ke dinding = **½ S**, antar detector = **S**.
-- Satu space = satu grid: kolom dan baris lurus menerus di seluruh ruangan, `n = ⌈L / S⌉ × ⌈W / S⌉`, jarak dibagi rata (`L / n`, tepi = setengahnya). Titik potong yang jatuh di luar boundary (coakan, bentuk L) dihapus.
-- Seluruh space harus dalam radius **0,7 S** dari detector. Kalau pojok/coakan belum tercover, garis kolom/baris digeser (tetap lurus, jarak ≤ S, tepi ≤ ½ S); kalau tetap tidak bisa, jumlah kolom/baris ditambah. Dipilih yang detectornya paling sedikit.
-- Jumlah kolom × baris bisa diatur manual (tombol − / +). Pelanggaran jarak > S atau di luar 0,7 S ditampilkan merah.
+- Satu space = satu grid kolom × baris. Detector terluar **≤ ½ S dari setiap dinding** (termasuk dinding coakan/bentuk L), jarak antar detector **≤ S** (boleh lebih rapat, tidak boleh lebih jauh).
+- Sumbu dibagi di posisi dinding jadi ruas; tiap ruas `n = ⌈panjang ruas / S⌉`, jarak = panjang / n, tepi = setengahnya. Ruas digabung selama aturan ½ S / S tetap terpenuhi, jadi ruangan persegi tetap `⌈L/S⌉ × ⌈W/S⌉`. Titik potong di luar boundary dihapus.
+- Contoh ER1 35,95 × 30,05 m dengan coakan kanan atas, S = 9: kolom 4 × 8,99 m; baris 3 × 8,35 m (½ S dari dinding bawah & dinding coakan) + 1 baris untuk bagian kiri atas → 15 detector.
+- Jumlah kolom × baris bisa diatur manual (tombol − / +); pelanggaran ½ S / S ditampilkan merah.
 - Sumbu panjang mengikuti dinding terlurus terpanjang, jadi space yang miring tetap benar.
 - Nilai S bisa diubah di jendela sesuai data pabrikan.
 

@@ -149,31 +149,26 @@ namespace FireAlarmAddin.UI
         private string GridDetail(CalcResult r)
         {
             var sb = new System.Text.StringBuilder();
-            sb.Append("Satu grid untuk seluruh space (kolom & baris lurus menerus):\n");
-            sb.Append("Arah panjang: ⌈" + F(_geo.Length) + " / " + F(r.DesignSpacing) + "⌉ = " + r.AutoCountX + " kolom\n");
-            sb.Append("Arah lebar: ⌈" + F(_geo.Width) + " / " + F(r.DesignSpacing) + "⌉ = " + r.AutoCountY + " baris\n");
+            sb.Append("Satu grid, detector terluar ≤ ½ S dari setiap dinding, antar detector ≤ S:\n");
             if (r.Manual)
                 sb.Append("Diatur manual: " + r.CountX + " × " + r.CountY + " (otomatis " + r.AutoCountX + " × " + r.AutoCountY + ")\n");
-            else if (r.CountX != r.AutoCountX || r.CountY != r.AutoCountY)
-                sb.Append("Dipakai " + r.CountX + " × " + r.CountY + " agar seluruh space tercover 0.7 S\n");
-            sb.Append("Kolom (x): " + Spacing(r.LinesX, _geo.Length) + "\n");
-            sb.Append("Baris (y): " + Spacing(r.LinesY, _geo.Width) + "\n");
-            if (r.Adjusted) sb.Append("Garis digeser dari pembagian rata agar pojok/coakan tercover 0.7 S\n");
+            sb.Append("Kolom (x): " + Segments(r.SegmentsX, r.DesignSpacing) + "\n");
+            sb.Append("Baris (y): " + Segments(r.SegmentsY, r.DesignSpacing) + "\n");
             sb.Append("Grid " + r.CountX + " × " + r.CountY + " = " + (r.CountX * r.CountY));
             if (r.Removed.Count > 0) sb.Append(", " + r.Removed.Count + " titik di luar boundary dihapus");
-            sb.Append("\nJarak terjauh ke detector = " + F(r.MaxDistance) + " m (maks 0.7 S = " + F(0.7 * r.DesignSpacing) + " m)");
+            sb.Append("\nJarak terjauh ke detector = " + F(r.MaxDistance) + " m");
             sb.Append("\nTotal = " + r.Quantity + " unit");
             return sb.ToString();
         }
 
-        // "tepi 4.49 | jarak 8.99, 8.99, 8.99 | tepi 4.49"
-        private static string Spacing(List<double> lines, double extent)
+        // "0–25.04: ⌈25.04/9⌉ = 3 → jarak 8.35, tepi 4.17 | 25.04–30.05: ..."
+        private static string Segments(List<Segment> segs, double S)
         {
-            if (lines.Count == 0) return "-";
-            var gaps = new List<string>();
-            for (int i = 1; i < lines.Count; i++) gaps.Add(F(lines[i] - lines[i - 1]));
-            return "tepi " + F(lines[0]) + (gaps.Count > 0 ? " | jarak " + string.Join(", ", gaps) : "") +
-                   " | tepi " + F(extent - lines[lines.Count - 1]) + " m";
+            if (segs.Count == 0) return "-";
+            return string.Join("\n   ", segs.Select(g =>
+                (segs.Count > 1 ? F(g.From) + "–" + F(g.To) + ": " : "") +
+                "⌈" + F(g.To - g.From) + "/" + F(S) + "⌉ = " + g.Count +
+                (g.Count > 1 ? " → jarak " + F(g.Gap) : "") + ", tepi " + F(g.Gap / 2) + " m"));
         }
 
         // editor jumlah kolom × baris (tombol − / +, dibangun ulang tiap hitung)
@@ -252,8 +247,13 @@ namespace FireAlarmAddin.UI
             // grid lines
             var gridBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0x9A, 0x9A));
             // garis kolom & baris grid (lurus menerus di seluruh space)
-            foreach (var x in r.LinesX) Line(P(x, 0), P(x, _geo.Width), gridBrush, 0.8, true);
-            foreach (var y in r.LinesY) Line(P(0, y), P(_geo.Length, y), gridBrush, 0.8, true);
+            // hanya bagian garis yang ada di dalam space
+            foreach (var x in r.LinesX)
+                foreach (var iv in NfpaCalculator.Crossings(x, true, _geo.LocalLoops, _geo.Length, _geo.Width))
+                    Line(P(x, iv.A), P(x, iv.B), gridBrush, 0.8, true);
+            foreach (var y in r.LinesY)
+                foreach (var iv in NfpaCalculator.Crossings(y, false, _geo.LocalLoops, _geo.Length, _geo.Width))
+                    Line(P(iv.A, y), P(iv.B, y), gridBrush, 0.8, true);
 
             // coverage + detectors
             double cov = r.DesignSpacing * 0.7 * scale; // radius 0.7S (NFPA)
