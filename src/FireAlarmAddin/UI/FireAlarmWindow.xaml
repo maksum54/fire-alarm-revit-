@@ -59,7 +59,7 @@
         <!-- Footer buttons -->
         <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
             <TextBlock x:Name="TxtHint" DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="#6B7280" FontSize="11"
-                       Text="Titik merah = posisi detector. Lingkaran = jangkauan 0.7 S. X abu-abu = di luar boundary (dihapus)."/>
+                       Text="Titik merah = posisi detector. Lingkaran = jangkauan 0.7 S. Garis biru = pembagian area (tiap area ½ S dari dindingnya)."/>
             <Button DockPanel.Dock="Right" Content="Tutup" Style="{StaticResource Btn}" Click="Close_Click" IsCancel="True"/>
             <Button DockPanel.Dock="Right" Content="Pilih Space Lain" Style="{StaticResource Btn}" Click="Pick_Click"/>
             <Button x:Name="BtnPlace" DockPanel.Dock="Right" Content="Tempatkan ke Model" MinWidth="170" Style="{StaticResource PrimaryBtn}" Click="Place_Click" IsDefault="True"/>

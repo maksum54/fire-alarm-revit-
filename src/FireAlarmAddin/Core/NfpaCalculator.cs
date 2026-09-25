@@ -21,7 +21,20 @@ namespace FireAlarmAddin.Core
         public List<Pt> Points = new List<Pt>();  // koordinat lokal (m) yang ada di dalam space
         public List<Pt> Removed = new List<Pt>(); // titik grid di luar boundary (dihapus otomatis)
         public int Quantity => Points.Count;
+        public List<Zone> Zones = new List<Zone>(); // persegi panjang hasil pecahan boundary
         public string Warning;
+    }
+
+    /// <summary>Satu area persegi panjang dengan grid detector sendiri (1/2 S dari dinding area).</summary>
+    public class Zone
+    {
+        public double X0, Y0, X1, Y1;
+        public int Nx, Ny;
+        public double W => X1 - X0;
+        public double H => Y1 - Y0;
+        public double Sx => W / Nx;
+        public double Sy => H / Ny;
+        public bool Skipped; // area kecil yang sudah tercover detector area lain (radius 0.7 S)
     }
 
     /// <summary>Perhitungan jumlah detector berdasarkan NFPA 72.</summary>
@@ -64,6 +77,10 @@ namespace FireAlarmAddin.Core
             r.DesignSpacing = listedSpacing * r.HeightFactor;
             if (r.DesignSpacing <= 0 || length <= 0 || width <= 0) return r;
 
+            if (polygon != null && polygon.Count > 0 && LayoutByZones(r, polygon))
+                return r;
+
+            // fallback: grid di bounding box, titik di luar boundary dihapus
             r.CountX = Math.Max(1, (int)Math.Ceiling(length / r.DesignSpacing - 1e-9));
             r.CountY = Math.Max(1, (int)Math.Ceiling(width / r.DesignSpacing - 1e-9));
             r.ActualSpacingX = length / r.CountX;
@@ -76,10 +93,98 @@ namespace FireAlarmAddin.Core
                     if (polygon == null || polygon.Count == 0 || Inside(p, polygon))
                         r.Points.Add(p);
                     else
-                        r.Removed.Add(p); // mis. bagian kosong pada space bentuk L
+                        r.Removed.Add(p);
                 }
             if (r.Points.Count == 0) r.Points.Add(InteriorPoint(length, width, polygon));
             return r;
+        }
+
+        /// <summary>
+        /// Pecah boundary jadi persegi panjang terbesar secara berurutan. Tiap persegi panjang diberi grid
+        /// sendiri: detector 1/2 S dari dinding area, S antar detector (dibagi rata). Area kecil yang seluruhnya
+        /// sudah dalam radius 0.7 S dari detector lain dilewati.
+        /// </summary>
+        private static bool LayoutByZones(CalcResult r, List<List<Pt>> polygon)
+        {
+            double S = r.DesignSpacing;
+            var xs = Coords(polygon, true);
+            var ys = Coords(polygon, false);
+            int nc = xs.Count - 1, nr = ys.Count - 1;
+            if (nc < 1 || nr < 1 || nc > 60 || nr > 60) return false; // terlalu kompleks (mis. lengkung) -> fallback
+
+            // sel grid (dari koordinat vertex) yang berada di dalam boundary
+            var free = new bool[nc, nr];
+            for (int i = 0; i < nc; i++)
+                for (int j = 0; j < nr; j++)
+                    free[i, j] = Inside(new Pt((xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2), polygon);
+
+            while (true)
+            {
+                // persegi panjang (luas nyata) terbesar dari sel yang masih bebas
+                double best = 0; int bi0 = 0, bi1 = 0, bj0 = 0, bj1 = 0;
+                for (int i0 = 0; i0 < nc; i0++)
+                    for (int j0 = 0; j0 < nr; j0++)
+                    {
+                        if (!free[i0, j0]) continue;
+                        int jMax = nr - 1;
+                        for (int i1 = i0; i1 < nc && free[i1, j0]; i1++)
+                        {
+                            int j1 = j0;
+                            while (j1 + 1 <= jMax && free[i1, j1 + 1]) j1++;
+                            jMax = j1;
+                            double a = (xs[i1 + 1] - xs[i0]) * (ys[jMax + 1] - ys[j0]);
+                            if (a > best) { best = a; bi0 = i0; bi1 = i1; bj0 = j0; bj1 = jMax; }
+                        }
+                    }
+                if (best <= 1e-6) break;
+                for (int i = bi0; i <= bi1; i++)
+                    for (int j = bj0; j <= bj1; j++) free[i, j] = false;
+
+                var z = new Zone { X0 = xs[bi0], X1 = xs[bi1 + 1], Y0 = ys[bj0], Y1 = ys[bj1 + 1] };
+                z.Nx = Math.Max(1, (int)Math.Ceiling(z.W / S - 1e-9));
+                z.Ny = Math.Max(1, (int)Math.Ceiling(z.H / S - 1e-9));
+                r.Zones.Add(z);
+
+                if (r.Points.Count > 0 && Covered(z, r.Points, 0.7 * S)) { z.Skipped = true; continue; }
+                for (int i = 0; i < z.Nx; i++)
+                    for (int j = 0; j < z.Ny; j++)
+                        r.Points.Add(new Pt(z.X0 + z.Sx * (i + 0.5), z.Y0 + z.Sy * (j + 0.5)));
+            }
+            if (r.Points.Count == 0) return false;
+
+            var main = r.Zones[0];
+            r.CountX = main.Nx; r.CountY = main.Ny;
+            r.ActualSpacingX = main.Sx; r.ActualSpacingY = main.Sy;
+            return true;
+        }
+
+        // semua titik sampel di area berada dalam radius dari salah satu detector
+        private static bool Covered(Zone z, List<Pt> dets, double radius)
+        {
+            const int n = 6;
+            for (int i = 0; i <= n; i++)
+                for (int j = 0; j <= n; j++)
+                {
+                    double x = z.X0 + z.W * i / n, y = z.Y0 + z.H * j / n;
+                    bool ok = false;
+                    foreach (var d in dets)
+                        if ((d.X - x) * (d.X - x) + (d.Y - y) * (d.Y - y) <= radius * radius + 1e-9) { ok = true; break; }
+                    if (!ok) return false;
+                }
+            return true;
+        }
+
+        // koordinat unik vertex (dibulatkan 1 cm, sliver < 5 cm digabung)
+        private static List<double> Coords(List<List<Pt>> polygon, bool x)
+        {
+            var v = new List<double>();
+            foreach (var loop in polygon)
+                foreach (var p in loop) v.Add(Math.Round(x ? p.X : p.Y, 2));
+            v.Sort();
+            var res = new List<double>();
+            foreach (var c in v)
+                if (res.Count == 0 || c - res[res.Count - 1] > 0.05) res.Add(c);
+            return res;
         }
 
         // titik cadangan yang pasti di dalam boundary (tengah bbox bisa di luar untuk bentuk L)
