@@ -13,7 +13,7 @@ Add-in Revit 2025 untuk menghitung jumlah **smoke / heat detector** per **Space*
 ## Aturan perhitungan
 | Detector | S listed | Reduksi tinggi |
 |---|---|---|
-| Smoke | 9 m | – |
+| Smoke | 9 m | Opsional (checkbox "Terapkan reduksi tinggi juga ke smoke", tabel yang sama) |
 | Heat | 15 m | NFPA 72 Tabel 17.6.3.5.1 (3.05 m → 1.00, 3.66 → 0.91 … 9.14 → 0.34) |
 
 - Jarak detector ke dinding = **½ S**, antar detector = **S**.

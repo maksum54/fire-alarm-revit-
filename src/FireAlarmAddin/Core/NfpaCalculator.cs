@@ -14,7 +14,7 @@ namespace FireAlarmAddin.Core
     public class CalcResult
     {
         public double ListedSpacing;     // S listed (m)
-        public double HeightFactor;      // faktor reduksi ketinggian (heat)
+        public double HeightFactor;      // faktor reduksi ketinggian (tabel heat NFPA 72)
         public double DesignSpacing;     // S efektif (m)
         public int CountX, CountY;       // grid di bounding box
         public double ActualSpacingX, ActualSpacingY;
@@ -55,9 +55,10 @@ namespace FireAlarmAddin.Core
             double listedSpacing, bool applyHeightReduction, List<List<Pt>> polygon)
         {
             var r = new CalcResult { ListedSpacing = listedSpacing, HeightFactor = 1.0 };
-            if (type == DetectorType.Heat && applyHeightReduction)
+            // applyHeightReduction untuk smoke = opsi konservatif user (NFPA hanya mensyaratkan untuk heat)
+            if (applyHeightReduction)
                 r.HeightFactor = HeatHeightFactor(height, out r.Warning);
-            else if (type == DetectorType.Smoke && height > 12.2)
+            if (type == DetectorType.Smoke && height > 12.2)
                 r.Warning = "Tinggi > 12.2 m: pertimbangkan beam/aspirating smoke detector.";
 
             r.DesignSpacing = listedSpacing * r.HeightFactor;
