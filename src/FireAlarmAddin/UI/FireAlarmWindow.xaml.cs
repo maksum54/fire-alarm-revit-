@@ -201,6 +201,8 @@ namespace FireAlarmAddin.UI
                 Line(new System.Windows.Point(c.X - 5, c.Y - 5), new System.Windows.Point(c.X + 5, c.Y + 5), grey, 2, false);
                 Line(new System.Windows.Point(c.X - 5, c.Y + 5), new System.Windows.Point(c.X + 5, c.Y - 5), grey, 2, false);
             }
+            // legenda jangkauan
+            Label("S desain = " + F(r.DesignSpacing) + " m  |  lingkaran R = 0.7 S = " + F(r.DesignSpacing * 0.7) + " m", 6, 4);
             // dimension labels
             Label(F(_geo.Length) + " m", P(_geo.Length / 2, 0).X - 20, P(0, 0).Y + 6);
             Label(F(_geo.Width) + " m", P(0, 0).X - 28, P(0, _geo.Width / 2).Y - 8, -90);
