@@ -99,11 +99,9 @@
                             <TextBox x:Name="TbHeight" TextChanged="Input_Changed"/>
                             <TextBlock Text="S listed (m) — bisa diubah sesuai data pabrikan" Style="{StaticResource Label}"/>
                             <TextBox x:Name="TbSpacing" TextChanged="Input_Changed"/>
-                            <CheckBox x:Name="CbReduction" Content="Reduksi tinggi NFPA 72 (heat)" IsChecked="True"
+                            <CheckBox x:Name="CbReduction" Content="Reduksi S berdasarkan tinggi plafon (smoke &amp; heat)"
+                                      ToolTip="Faktor NFPA 72 Tabel 17.6.3.5.1 dikalikan ke S listed. Berlaku untuk smoke dan heat." IsChecked="True"
                                       Margin="0,8,0,0" Checked="Input_Changed" Unchecked="Input_Changed"/>
-                            <CheckBox x:Name="CbReductionSmoke" Content="Terapkan reduksi tinggi juga ke smoke" IsChecked="False"
-                                      Margin="0,8,0,0" Checked="Input_Changed" Unchecked="Input_Changed"
-                                      ToolTip="Opsi konservatif: tabel reduksi heat NFPA 72 juga dipakai untuk smoke detector."/>
                             <TextBlock Text="Family detector" Style="{StaticResource Label}"/>
                             <ComboBox x:Name="CbFamily" SelectionChanged="Input_Changed" DisplayMemberPath="Display" Padding="6,4"/>
                         </StackPanel>

@@ -20,7 +20,6 @@ namespace FireAlarmAddin.UI
             public double Height;
             public double Spacing;
             public bool Reduction;
-            public bool ReductionSmoke;
             public Autodesk.Revit.DB.FamilySymbol Symbol;
         }
 
@@ -62,7 +61,6 @@ namespace FireAlarmAddin.UI
                 if (previous.Type == DetectorType.Heat) { RbHeat.IsChecked = true; _heatS = previous.Spacing; }
                 else _smokeS = previous.Spacing;
                 CbReduction.IsChecked = previous.Reduction;
-                CbReductionSmoke.IsChecked = previous.ReductionSmoke;
                 var sel = items.FirstOrDefault(i => i.Symbol != null && previous.Symbol != null && i.Symbol.Id == previous.Symbol.Id);
                 if (sel != null) CbFamily.SelectedItem = sel;
             }
@@ -106,9 +104,7 @@ namespace FireAlarmAddin.UI
             TbHeight.BorderBrush = okH ? Brushes.LightGray : Brushes.Red;
             TbSpacing.BorderBrush = okS ? Brushes.LightGray : Brushes.Red;
             bool heat = SelectedType == DetectorType.Heat;
-            CbReduction.Visibility = heat ? Visibility.Visible : Visibility.Collapsed;
-            CbReductionSmoke.Visibility = heat ? Visibility.Collapsed : Visibility.Visible;
-            bool reduce = heat ? CbReduction.IsChecked == true : CbReductionSmoke.IsChecked == true;
+            bool reduce = CbReduction.IsChecked == true; // satu opsi untuk smoke & heat agar hasil konsisten
             BtnPlace.IsEnabled = okH && okS;
             if (!okH || !okS)
             {
@@ -126,7 +122,6 @@ namespace FireAlarmAddin.UI
             CurrentSettings = new Settings
             {
                 Type = SelectedType, Height = h, Spacing = s, Reduction = CbReduction.IsChecked == true,
-                ReductionSmoke = CbReductionSmoke.IsChecked == true,
                 Symbol = (CbFamily.SelectedItem as SymbolItem)?.Symbol
             };
 
@@ -134,7 +129,7 @@ namespace FireAlarmAddin.UI
             TxtQtyUnit.Text = SelectedType == DetectorType.Smoke ? " smoke detector" : " heat detector";
             TxtDetail.Text =
                 "S listed = " + F(r.ListedSpacing) + " m" +
-                (reduce ? "  × " + F(r.HeightFactor) + " (tabel reduksi tinggi " + F(h) + " m" + (heat ? "" : ", opsi smoke") + ")" : "") + "\n" +
+                (reduce ? "  × " + F(r.HeightFactor) + " (tabel reduksi tinggi " + F(h) + " m" + ")" : "") + "\n" +
                 "S desain = " + F(r.DesignSpacing) + " m\n" +
                 "Arah panjang: ⌈" + F(_geo.Length) + " / " + F(r.DesignSpacing) + "⌉ = " + r.CountX +
                 "  → jarak " + F(r.ActualSpacingX) + " m, tepi " + F(r.ActualSpacingX / 2) + " m\n" +
