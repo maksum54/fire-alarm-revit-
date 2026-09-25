@@ -1,0 +1,130 @@
+<Window x:Class="FireAlarmAddin.UI.FireAlarmWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Fire Alarm Detector - NFPA 72" Width="900" Height="620" MinWidth="780" MinHeight="560"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        FontFamily="Segoe UI" FontSize="13" Background="#F4F6F9">
+    <Window.Resources>
+        <SolidColorBrush x:Key="Accent" Color="#D32F2F"/>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="14"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="BorderBrush" Value="#E0E4EA"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style x:Key="Label" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#6B7280"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,6,0,2"/>
+        </Style>
+        <Style x:Key="Value" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#111827"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="BorderBrush" Value="#CBD2DB"/>
+        </Style>
+        <Style x:Key="Btn" TargetType="Button">
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="Margin" Value="8,0,0,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#CBD2DB"/>
+        </Style>
+        <Style x:Key="PrimaryBtn" TargetType="Button" BasedOn="{StaticResource Btn}">
+            <Setter Property="Background" Value="{StaticResource Accent}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="14">
+        <!-- Header -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource Accent}" CornerRadius="8" Padding="16,10" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock x:Name="TxtSpaceName" Text="Space" Foreground="White" FontSize="20" FontWeight="Bold"/>
+                <TextBlock x:Name="TxtSpaceInfo" Text="" Foreground="#FFE3E3" FontSize="12"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Footer buttons -->
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <TextBlock x:Name="TxtHint" DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="#6B7280" FontSize="11"
+                       Text="Titik merah = posisi detector. Garis putus = jangkauan S/2."/>
+            <Button DockPanel.Dock="Right" Content="Tutup" Style="{StaticResource Btn}" Click="Close_Click" IsCancel="True"/>
+            <Button DockPanel.Dock="Right" Content="Pilih Space Lain" Style="{StaticResource Btn}" Click="Pick_Click"/>
+            <Button x:Name="BtnPlace" DockPanel.Dock="Right" Content="Tempatkan Detector di Model" Style="{StaticResource PrimaryBtn}" Click="Place_Click" IsDefault="True"/>
+        </DockPanel>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,10,0">
+                <StackPanel>
+                    <!-- 1. Dimensi -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="1. DIMENSI SPACE" FontWeight="Bold" Foreground="{StaticResource Accent}"/>
+                            <UniformGrid Columns="2">
+                                <StackPanel><TextBlock Text="Panjang (L)" Style="{StaticResource Label}"/><TextBlock x:Name="TxtL" Style="{StaticResource Value}"/></StackPanel>
+                                <StackPanel><TextBlock Text="Lebar (W)" Style="{StaticResource Label}"/><TextBlock x:Name="TxtW" Style="{StaticResource Value}"/></StackPanel>
+                                <StackPanel><TextBlock Text="L × W" Style="{StaticResource Label}"/><TextBlock x:Name="TxtLW" Style="{StaticResource Value}"/></StackPanel>
+                                <StackPanel><TextBlock Text="Luas aktual Space" Style="{StaticResource Label}"/><TextBlock x:Name="TxtArea" Style="{StaticResource Value}"/></StackPanel>
+                            </UniformGrid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 2. Input -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="2. INPUT" FontWeight="Bold" Foreground="{StaticResource Accent}"/>
+                            <TextBlock Text="Jenis detector" Style="{StaticResource Label}"/>
+                            <StackPanel Orientation="Horizontal">
+                                <RadioButton x:Name="RbSmoke" Content="Smoke (S = 9 m)" IsChecked="True" Margin="0,0,16,0" Checked="Type_Changed"/>
+                                <RadioButton x:Name="RbHeat" Content="Heat (S = 15 m)" Checked="Type_Changed"/>
+                            </StackPanel>
+                            <TextBlock Text="Tinggi pemasangan / plafon (m)" Style="{StaticResource Label}"/>
+                            <TextBox x:Name="TbHeight" TextChanged="Input_Changed"/>
+                            <TextBlock Text="S listed (m) — bisa diubah sesuai data pabrikan" Style="{StaticResource Label}"/>
+                            <TextBox x:Name="TbSpacing" TextChanged="Input_Changed"/>
+                            <CheckBox x:Name="CbReduction" Content="Reduksi ketinggian NFPA 72 (heat detector)" IsChecked="True"
+                                      Margin="0,8,0,0" Checked="Input_Changed" Unchecked="Input_Changed"/>
+                            <TextBlock Text="Family detector" Style="{StaticResource Label}"/>
+                            <ComboBox x:Name="CbFamily" SelectionChanged="Input_Changed" DisplayMemberPath="Display" Padding="6,4"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 3. Hasil -->
+                    <Border Style="{StaticResource Card}" Background="#FFF5F5" BorderBrush="#F5C2C2">
+                        <StackPanel>
+                            <TextBlock Text="3. HASIL" FontWeight="Bold" Foreground="{StaticResource Accent}"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <TextBlock x:Name="TxtQty" Text="0" FontSize="40" FontWeight="Bold" Foreground="{StaticResource Accent}"/>
+                                <TextBlock x:Name="TxtQtyUnit" Text=" unit" FontSize="16" VerticalAlignment="Bottom" Margin="4,0,0,10"/>
+                            </StackPanel>
+                            <TextBlock x:Name="TxtDetail" TextWrapping="Wrap" Foreground="#374151" FontSize="12" LineHeight="18"/>
+                            <TextBlock x:Name="TxtWarning" TextWrapping="Wrap" Foreground="#B45309" FontSize="12" Margin="0,6,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Preview -->
+            <Border Grid.Column="1" Style="{StaticResource Card}" Margin="0">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="PREVIEW LAYOUT" FontWeight="Bold" Foreground="{StaticResource Accent}" Margin="0,0,0,8"/>
+                    <Canvas x:Name="Preview" ClipToBounds="True" SizeChanged="Preview_SizeChanged" Background="#FAFBFC"/>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

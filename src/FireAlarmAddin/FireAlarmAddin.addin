@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Fire Alarm Detector Calculator</Name>
+    <Assembly>FireAlarmAddin\FireAlarmAddin.dll</Assembly>
+    <FullClassName>FireAlarmAddin.App</FullClassName>
+    <ClientId>6F3B7C21-9E4A-4D8B-A1C2-5E7F90AB12CD</ClientId>
+    <VendorId>FIREALARM</VendorId>
+    <VendorDescription>Fire Alarm NFPA 72 Detector Calculator</VendorDescription>
+  </AddIn>
+</RevitAddIns>
