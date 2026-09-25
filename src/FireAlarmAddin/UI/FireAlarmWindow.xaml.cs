@@ -36,6 +36,8 @@ namespace FireAlarmAddin.UI
         private readonly SpaceGeometry _geo;
         private bool _loading = true;
         private double _smokeS = NfpaCalculator.DefaultSmokeSpacing, _heatS = NfpaCalculator.DefaultHeatSpacing;
+        // jumlah per arah yang diatur user: key = index area (0 untuk grid tanpa area)
+        private readonly Dictionary<int, (int Nx, int Ny)> _manual = new Dictionary<int, (int Nx, int Ny)>();
 
         public FireAlarmWindow(SpaceGeometry geo, IList<Autodesk.Revit.DB.FamilySymbol> symbols, Settings previous)
         {
@@ -83,6 +85,7 @@ namespace FireAlarmAddin.UI
             _loading = true;
             TbSpacing.Text = F(SelectedType == DetectorType.Heat ? _heatS : _smokeS);
             _loading = false;
+            _manual.Clear();
             Recalculate();
         }
 
@@ -93,6 +96,7 @@ namespace FireAlarmAddin.UI
             {
                 if (SelectedType == DetectorType.Heat) _heatS = s; else _smokeS = s;
             }
+            if (sender != CbFamily) _manual.Clear(); // S/tinggi berubah -> jumlah otomatis dihitung ulang
             Recalculate();
         }
 
@@ -113,11 +117,12 @@ namespace FireAlarmAddin.UI
                 TxtWarning.Text = "";
                 Result = null;
                 Preview.Children.Clear();
+                ManualBox.Visibility = Visibility.Collapsed;
                 return;
             }
 
             var r = NfpaCalculator.Calculate(_geo.Length, _geo.Width, h, SelectedType, s,
-                reduce, _geo.LocalLoops);
+                reduce, _geo.LocalLoops, _manual);
             Result = r;
             CurrentSettings = new Settings
             {
@@ -132,14 +137,19 @@ namespace FireAlarmAddin.UI
                 (reduce ? "  × " + F(r.HeightFactor) + " (tabel reduksi tinggi " + F(h) + " m" + ")" : "") + "\n" +
                 "S desain = " + F(r.DesignSpacing) + " m\n" +
                 (r.Zones.Count > 0 ? ZoneDetail(r) :
-                "Arah panjang: ⌈" + F(_geo.Length) + " / " + F(r.DesignSpacing) + "⌉ = " + r.CountX +
+                (r.Manual ? "Diatur manual: " + r.CountX + " × " + r.CountY + " (otomatis " + r.AutoCountX + " × " + r.AutoCountY + ")\n" : "") +
+                "Arah panjang: ⌈" + F(_geo.Length) + " / " + F(r.DesignSpacing) + "⌉ = " + r.AutoCountX +
                 "  → jarak " + F(r.ActualSpacingX) + " m, tepi " + F(r.ActualSpacingX / 2) + " m\n" +
-                "Arah lebar: ⌈" + F(_geo.Width) + " / " + F(r.DesignSpacing) + "⌉ = " + r.CountY +
+                "Arah lebar: ⌈" + F(_geo.Width) + " / " + F(r.DesignSpacing) + "⌉ = " + r.AutoCountY +
                 "  → jarak " + F(r.ActualSpacingY) + " m, tepi " + F(r.ActualSpacingY / 2) + " m\n" +
                 "Grid " + r.CountX + " × " + r.CountY + " = " + (r.CountX * r.CountY) +
                 (r.Removed.Count > 0 ? "\n" + r.Removed.Count + " titik di luar boundary otomatis dihapus → " + r.Quantity + " unit" : ""));
             var warn = r.Warning ?? "";
+            if (r.Violations.Count > 0)
+                warn = (warn.Length > 0 ? warn + "\n" : "") + "⚠ Jumlah manual tidak memenuhi NFPA 72:\n• " + string.Join("\n• ", r.Violations);
             TxtWarning.Text = warn;
+            TxtWarning.Foreground = r.Violations.Count > 0 ? Brushes.Firebrick : new SolidColorBrush(Color.FromRgb(0xB4, 0x53, 0x09));
+            BuildZoneEditor(r);
             DrawPreview();
         }
 
@@ -160,6 +170,13 @@ namespace FireAlarmAddin.UI
                 bool wider = Math.Abs(z.GW - z.W) > 0.01 || Math.Abs(z.GH - z.H) > 0.01;
                 if (wider) sb.Append(", grid diperlebar jadi " + F(z.GW) + " × " + F(z.GH) + " m");
                 int n = z.Points.Count;
+                if (z.Manual)
+                {
+                    sb.Append(" → diatur manual " + z.Nx + " × " + z.Ny + " (otomatis " + z.AutoNx + " × " + z.AutoNy + ")" +
+                              (n != z.Nx * z.Ny ? ", " + (z.Nx * z.Ny - n) + " titik di luar boundary" : "") + " = " + n + " unit\n");
+                    sb.Append("   jarak " + F(z.Sx) + " / " + F(z.Sy) + " m, tepi dinding " + F(z.Sx / 2) + " / " + F(z.Sy / 2) + " m\n");
+                    continue;
+                }
                 sb.Append(" → ⌈" + F(z.GW) + "/" + F(r.DesignSpacing) + "⌉ × ⌈" + F(z.GH) + "/" + F(r.DesignSpacing) + "⌉ = " +
                           z.Nx + " × " + z.Ny + (n != z.Nx * z.Ny ? " (" + (z.Nx * z.Ny - n) + " titik di luar boundary)" : "") +
                           " = " + n + " unit\n");
@@ -167,6 +184,74 @@ namespace FireAlarmAddin.UI
             }
             sb.Append("Total = " + r.Quantity + " unit");
             return sb.ToString();
+        }
+
+        // baris editor jumlah kolom × baris per area (tombol − / +, dibangun ulang tiap hitung)
+        private void BuildZoneEditor(CalcResult r)
+        {
+            ZoneEditor.Children.Clear();
+            var rows = new List<(int Key, string Name, int Nx, int Ny, int AutoNx, int AutoNy, double Sx, double Sy)>();
+            if (r.Zones.Count > 0)
+            {
+                for (int k = 0; k < r.Zones.Count; k++)
+                {
+                    var z = r.Zones[k];
+                    if (!z.Editable) continue;
+                    rows.Add((k, r.Zones.Count > 1 ? "Area " + (k + 1) : "Grid", z.Nx, z.Ny, z.AutoNx, z.AutoNy, z.Sx, z.Sy));
+                }
+            }
+            else if (r.CountX > 0)
+                rows.Add((0, "Grid", r.CountX, r.CountY, r.AutoCountX, r.AutoCountY, r.ActualSpacingX, r.ActualSpacingY));
+
+            ManualBox.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            BtnResetManual.IsEnabled = _manual.Count > 0;
+            foreach (var row in rows)
+            {
+                var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
+                sp.Children.Add(new TextBlock { Text = row.Name, Width = 52, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 });
+                AddStepper(sp, row.Key, row.Nx, row.Ny, true);
+                sp.Children.Add(new TextBlock { Text = "×", Margin = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center });
+                AddStepper(sp, row.Key, row.Nx, row.Ny, false);
+                bool changed = row.Nx != row.AutoNx || row.Ny != row.AutoNy;
+                sp.Children.Add(new TextBlock
+                {
+                    Text = "  = " + (row.Nx * row.Ny) + (changed ? "  (auto " + row.AutoNx + "×" + row.AutoNy + ")" : "  (auto)"),
+                    VerticalAlignment = VerticalAlignment.Center, FontSize = 11,
+                    Foreground = changed ? Brushes.Firebrick : Brushes.DimGray,
+                    ToolTip = "Jarak " + F(row.Sx) + " / " + F(row.Sy) + " m"
+                });
+                ZoneEditor.Children.Add(sp);
+            }
+        }
+
+        private void AddStepper(Panel host, int key, int nx, int ny, bool isX)
+        {
+            int v = isX ? nx : ny;
+            Button B(string t, int delta) => new Button
+            {
+                Content = t, Width = 22, Height = 22, Padding = new Thickness(0), Cursor = System.Windows.Input.Cursors.Hand,
+                Background = Brushes.White, BorderBrush = new SolidColorBrush(Color.FromRgb(0xCB, 0xD2, 0xDB)),
+                IsEnabled = v + delta >= 1 && v + delta <= 50,
+                Tag = delta
+            };
+            var minus = B("−", -1); var plus = B("+", 1);
+            RoutedEventHandler click = (s, e) =>
+            {
+                int d = (int)((Button)s).Tag;
+                _manual[key] = isX ? (nx + d, ny) : (nx, ny + d);
+                Recalculate();
+            };
+            minus.Click += click; plus.Click += click;
+            host.Children.Add(minus);
+            host.Children.Add(new TextBlock { Text = v.ToString(), Width = 26, TextAlignment = TextAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold });
+            host.Children.Add(plus);
+        }
+
+        private void ResetManual_Click(object sender, RoutedEventArgs e)
+        {
+            _manual.Clear();
+            Recalculate();
         }
 
         private void Preview_SizeChanged(object sender, SizeChangedEventArgs e) => DrawPreview();

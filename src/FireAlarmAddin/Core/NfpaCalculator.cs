@@ -17,12 +17,15 @@ namespace FireAlarmAddin.Core
         public double HeightFactor;      // faktor reduksi ketinggian (tabel heat NFPA 72)
         public double DesignSpacing;     // S efektif (m)
         public int CountX, CountY;       // grid di bounding box
+        public int AutoCountX, AutoCountY; // CountX/Y hasil otomatis (sebelum diatur user)
         public double ActualSpacingX, ActualSpacingY;
         public List<Pt> Points = new List<Pt>();  // koordinat lokal (m) yang ada di dalam space
         public List<Pt> Removed = new List<Pt>(); // titik grid di luar boundary (dihapus otomatis)
         public int Quantity => Points.Count;
         public List<Zone> Zones = new List<Zone>(); // persegi panjang hasil pecahan boundary
         public string Warning;
+        public bool Manual;               // ada jumlah per arah yang diatur user
+        public List<string> Violations = new List<string>(); // pelanggaran jarak/cakupan akibat jumlah manual
     }
 
     /// <summary>Satu area persegi panjang dengan grid detector sendiri (1/2 S dari dinding area).</summary>
@@ -39,6 +42,9 @@ namespace FireAlarmAddin.Core
         public double Sx => GW / Nx;
         public double Sy => GH / Ny;
         public bool Skipped; // area kecil yang sudah tercover detector area lain (radius 0.7 S)
+        public int AutoNx, AutoNy; // jumlah hasil hitungan otomatis (sebelum diatur user)
+        public bool Manual;        // Nx/Ny diatur user
+        public bool Editable => !Skipped && MergedInto == null && Nx > 0;
         public Zone MergedInto; // area sempit yang grid-nya ikut area ini (0 unit sendiri)
         public List<Pt> Points = new List<Pt>();
     }
@@ -70,8 +76,10 @@ namespace FireAlarmAddin.Core
         /// length/width dalam meter (sistem lokal space), polygon = boundary dalam sistem lokal
         /// (origin di pojok kiri bawah bounding box). Detector pertama 1/2 S dari tepi, lalu S antar detector.
         /// </summary>
+        /// <param name="manual">jumlah per arah dari user: key = index area (0 untuk grid tanpa area), value = (Nx, Ny)</param>
         public static CalcResult Calculate(double length, double width, double height, DetectorType type,
-            double listedSpacing, bool applyHeightReduction, List<List<Pt>> polygon)
+            double listedSpacing, bool applyHeightReduction, List<List<Pt>> polygon,
+            IDictionary<int, (int Nx, int Ny)> manual = null)
         {
             var r = new CalcResult { ListedSpacing = listedSpacing, HeightFactor = 1.0 };
             // applyHeightReduction untuk smoke = opsi konservatif user (NFPA hanya mensyaratkan untuk heat)
@@ -84,11 +92,20 @@ namespace FireAlarmAddin.Core
             if (r.DesignSpacing <= 0 || length <= 0 || width <= 0) return r;
 
             if (polygon != null && polygon.Count > 0 && LayoutByZones(r, polygon))
+            {
+                if (manual != null && manual.Count > 0) ApplyManual(r, polygon, manual);
                 return r;
+            }
 
             // fallback: grid di bounding box, titik di luar boundary dihapus
             r.CountX = Math.Max(1, (int)Math.Ceiling(length / r.DesignSpacing - 1e-9));
             r.CountY = Math.Max(1, (int)Math.Ceiling(width / r.DesignSpacing - 1e-9));
+            r.AutoCountX = r.CountX; r.AutoCountY = r.CountY;
+            if (manual != null && manual.TryGetValue(0, out var m0) && m0.Nx > 0 && m0.Ny > 0)
+            {
+                r.Manual = m0.Nx != r.CountX || m0.Ny != r.CountY;
+                r.CountX = m0.Nx; r.CountY = m0.Ny;
+            }
             r.ActualSpacingX = length / r.CountX;
             r.ActualSpacingY = width / r.CountY;
 
@@ -102,7 +119,56 @@ namespace FireAlarmAddin.Core
                         r.Removed.Add(p);
                 }
             if (r.Points.Count == 0) r.Points.Add(InteriorPoint(length, width, polygon));
+            if (r.Manual)
+            {
+                if (r.ActualSpacingX > r.DesignSpacing + 1e-6 || r.ActualSpacingY > r.DesignSpacing + 1e-6)
+                    r.Violations.Add("Jarak " + R2(r.ActualSpacingX) + " / " + R2(r.ActualSpacingY) + " m melebihi S = " + R2(r.DesignSpacing) + " m");
+                var all = new Zone { X0 = 0, Y0 = 0, X1 = length, Y1 = width };
+                if (!Covered(all, r.Points, 0.7 * r.DesignSpacing, polygon != null && polygon.Count > 0 ? polygon : null))
+                    r.Violations.Add("Ada bagian space di luar jangkauan 0.7 S = " + R2(0.7 * r.DesignSpacing) + " m");
+            }
             return r;
+        }
+
+        private static string R2(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+        /// <summary>
+        /// Terapkan jumlah per arah dari user ke area bergrid, lalu cek aturan NFPA: jarak antar detector
+        /// &lt;= S (otomatis tepi dinding &lt;= 1/2 S) dan seluruh space dalam jangkauan 0.7 S.
+        /// </summary>
+        private static void ApplyManual(CalcResult r, List<List<Pt>> polygon, IDictionary<int, (int Nx, int Ny)> manual)
+        {
+            double S = r.DesignSpacing;
+            for (int k = 0; k < r.Zones.Count; k++)
+            {
+                var z = r.Zones[k];
+                if (!z.Editable || !manual.TryGetValue(k, out var m) || m.Nx < 1 || m.Ny < 1) continue;
+                if (m.Nx == z.Nx && m.Ny == z.Ny) continue;
+                z.Nx = m.Nx; z.Ny = m.Ny; z.Manual = true; r.Manual = true;
+                z.Points.Clear();
+                for (int i = 0; i < z.Nx; i++)
+                    for (int j = 0; j < z.Ny; j++)
+                    {
+                        var p = new Pt(z.GX0 + z.Sx * (i + 0.5), z.GY0 + z.Sy * (j + 0.5));
+                        if (Inside(p, polygon)) z.Points.Add(p);
+                    }
+            }
+            if (!r.Manual) return;
+            r.Points = AllPoints(r.Zones);
+
+            for (int k = 0; k < r.Zones.Count; k++)
+            {
+                var z = r.Zones[k];
+                if (z.Manual && (z.Sx > S + 1e-6 || z.Sy > S + 1e-6))
+                    r.Violations.Add("Area " + (k + 1) + ": jarak " + R2(z.Sx) + " / " + R2(z.Sy) + " m melebihi S = " + R2(S) +
+                                     " m (tepi dinding " + R2(z.Sx / 2) + " / " + R2(z.Sy / 2) + " m > 1/2 S)");
+            }
+            for (int k = 0; k < r.Zones.Count; k++)
+                if (!Covered(r.Zones[k], r.Points, 0.7 * S))
+                    r.Violations.Add("Area " + (k + 1) + ": ada bagian di luar jangkauan 0.7 S = " + R2(0.7 * S) + " m");
+            var main = r.Zones[0];
+            r.CountX = main.Nx; r.CountY = main.Ny;
+            r.ActualSpacingX = main.Sx; r.ActualSpacingY = main.Sy;
         }
 
         /// <summary>
@@ -159,6 +225,7 @@ namespace FireAlarmAddin.Core
             }
             r.Points = AllPoints(r.Zones);
             if (r.Points.Count == 0) return false;
+            foreach (var z in r.Zones) { z.AutoNx = z.Nx; z.AutoNy = z.Ny; }
 
             var main = r.Zones[0];
             r.CountX = main.Nx; r.CountY = main.Ny;
@@ -236,7 +303,7 @@ namespace FireAlarmAddin.Core
         }
 
         // semua titik sampel di area berada dalam radius dari salah satu detector
-        private static bool Covered(Zone z, List<Pt> dets, double radius)
+        private static bool Covered(Zone z, List<Pt> dets, double radius, List<List<Pt>> polygon = null)
         {
             // sampel tiap <= radius/8 supaya celah di tengah area besar juga terdeteksi
             int nx = Math.Max(6, (int)Math.Ceiling(z.W / (radius / 8))), ny = Math.Max(6, (int)Math.Ceiling(z.H / (radius / 8)));
@@ -244,6 +311,7 @@ namespace FireAlarmAddin.Core
                 for (int j = 0; j <= ny; j++)
                 {
                     double x = z.X0 + z.W * i / nx, y = z.Y0 + z.H * j / ny;
+                    if (polygon != null && !Inside(new Pt(x, y), polygon)) continue;
                     bool ok = false;
                     foreach (var d in dets)
                         if ((d.X - x) * (d.X - x) + (d.Y - y) * (d.Y - y) <= radius * radius + 1e-9) { ok = true; break; }
