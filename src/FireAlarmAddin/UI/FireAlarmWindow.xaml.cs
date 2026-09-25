@@ -152,8 +152,17 @@ namespace FireAlarmAddin.UI
             {
                 sb.Append((r.Zones.Count > 1 ? "Area " + k++ + ": " : "") + F(z.W) + " × " + F(z.H) + " m");
                 if (z.Skipped) { sb.Append(" → sudah tercover (0.7 S), 0 unit\n"); continue; }
-                sb.Append(" → ⌈" + F(z.W) + "/" + F(r.DesignSpacing) + "⌉ × ⌈" + F(z.H) + "/" + F(r.DesignSpacing) + "⌉ = " +
-                          z.Nx + " × " + z.Ny + " = " + (z.Nx * z.Ny) + " unit\n");
+                if (z.MergedInto != null)
+                {
+                    sb.Append(" → area sempit, digabung ke grid Area " + (r.Zones.IndexOf(z.MergedInto) + 1) + ", 0 unit\n");
+                    continue;
+                }
+                bool wider = Math.Abs(z.GW - z.W) > 0.01 || Math.Abs(z.GH - z.H) > 0.01;
+                if (wider) sb.Append(", grid diperlebar jadi " + F(z.GW) + " × " + F(z.GH) + " m");
+                int n = z.Points.Count;
+                sb.Append(" → ⌈" + F(z.GW) + "/" + F(r.DesignSpacing) + "⌉ × ⌈" + F(z.GH) + "/" + F(r.DesignSpacing) + "⌉ = " +
+                          z.Nx + " × " + z.Ny + (n != z.Nx * z.Ny ? " (" + (z.Nx * z.Ny - n) + " titik di luar boundary)" : "") +
+                          " = " + n + " unit\n");
                 sb.Append("   jarak " + F(z.Sx) + " / " + F(z.Sy) + " m, tepi dinding " + F(z.Sx / 2) + " / " + F(z.Sy / 2) + " m\n");
             }
             sb.Append("Total = " + r.Quantity + " unit");
@@ -187,9 +196,9 @@ namespace FireAlarmAddin.UI
             {
                 foreach (var z in r.Zones)
                 {
-                    if (z.Skipped) continue;
-                    for (int i = 1; i < z.Nx; i++) Line(P(z.X0 + i * z.Sx, z.Y0), P(z.X0 + i * z.Sx, z.Y1), gridBrush, 0.8, true);
-                    for (int j = 1; j < z.Ny; j++) Line(P(z.X0, z.Y0 + j * z.Sy), P(z.X1, z.Y0 + j * z.Sy), gridBrush, 0.8, true);
+                    if (z.Skipped || z.MergedInto != null) continue;
+                    for (int i = 1; i < z.Nx; i++) Line(P(z.GX0 + i * z.Sx, z.GY0), P(z.GX0 + i * z.Sx, z.GY1), gridBrush, 0.8, true);
+                    for (int j = 1; j < z.Ny; j++) Line(P(z.GX0, z.GY0 + j * z.Sy), P(z.GX1, z.GY0 + j * z.Sy), gridBrush, 0.8, true);
                 }
                 if (r.Zones.Count > 1) // batas antar area
                     foreach (var z in r.Zones)

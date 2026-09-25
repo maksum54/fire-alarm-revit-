@@ -29,12 +29,18 @@ namespace FireAlarmAddin.Core
     public class Zone
     {
         public double X0, Y0, X1, Y1;
+        // bentang grid detector; = area sendiri, atau lebih lebar kalau area sempit di sebelahnya digabung
+        public double GX0, GY0, GX1, GY1;
         public int Nx, Ny;
         public double W => X1 - X0;
         public double H => Y1 - Y0;
-        public double Sx => W / Nx;
-        public double Sy => H / Ny;
+        public double GW => GX1 - GX0;
+        public double GH => GY1 - GY0;
+        public double Sx => GW / Nx;
+        public double Sy => GH / Ny;
         public bool Skipped; // area kecil yang sudah tercover detector area lain (radius 0.7 S)
+        public Zone MergedInto; // area sempit yang grid-nya ikut area ini (0 unit sendiri)
+        public List<Pt> Points = new List<Pt>();
     }
 
     /// <summary>Perhitungan jumlah detector berdasarkan NFPA 72.</summary>
@@ -141,15 +147,17 @@ namespace FireAlarmAddin.Core
                     for (int j = bj0; j <= bj1; j++) free[i, j] = false;
 
                 var z = new Zone { X0 = xs[bi0], X1 = xs[bi1 + 1], Y0 = ys[bj0], Y1 = ys[bj1 + 1] };
-                z.Nx = Math.Max(1, (int)Math.Ceiling(z.W / S - 1e-9));
-                z.Ny = Math.Max(1, (int)Math.Ceiling(z.H / S - 1e-9));
+                z.GX0 = z.X0; z.GX1 = z.X1; z.GY0 = z.Y0; z.GY1 = z.Y1;
+                FillGrid(z, S, null);
+                z.Points.Clear();
                 r.Zones.Add(z);
 
-                if (r.Points.Count > 0 && Covered(z, r.Points, 0.7 * S)) { z.Skipped = true; continue; }
-                for (int i = 0; i < z.Nx; i++)
-                    for (int j = 0; j < z.Ny; j++)
-                        r.Points.Add(new Pt(z.X0 + z.Sx * (i + 0.5), z.Y0 + z.Sy * (j + 0.5)));
+                var all = AllPoints(r.Zones);
+                if (all.Count > 0 && Covered(z, all, 0.7 * S)) { z.Skipped = true; continue; }
+                if (TryMerge(r.Zones, z, S, polygon)) continue;
+                FillGrid(z, S, null);
             }
+            r.Points = AllPoints(r.Zones);
             if (r.Points.Count == 0) return false;
 
             var main = r.Zones[0];
@@ -158,14 +166,84 @@ namespace FireAlarmAddin.Core
             return true;
         }
 
+        // grid detector di bentang GX/GY: 1/2 S dari tepi, S antar detector (dibagi rata)
+        private static void FillGrid(Zone z, double S, List<List<Pt>> polygon)
+        {
+            z.Nx = Math.Max(1, (int)Math.Ceiling(z.GW / S - 1e-9));
+            z.Ny = Math.Max(1, (int)Math.Ceiling(z.GH / S - 1e-9));
+            z.Points.Clear();
+            for (int i = 0; i < z.Nx; i++)
+                for (int j = 0; j < z.Ny; j++)
+                {
+                    var p = new Pt(z.GX0 + z.Sx * (i + 0.5), z.GY0 + z.Sy * (j + 0.5));
+                    if (polygon == null || Inside(p, polygon)) z.Points.Add(p);
+                }
+        }
+
+        private static List<Pt> AllPoints(List<Zone> zones)
+        {
+            var res = new List<Pt>();
+            foreach (var z in zones) res.AddRange(z.Points);
+            return res;
+        }
+
+        /// <summary>
+        /// Area yang belum tercover dicoba digabung ke area bergrid yang menempel di sisinya (mis. jalur sempit 1 m
+        /// di sepanjang dinding): bentang grid area itu diperlebar sampai dinding area baru lalu grid-nya dihitung ulang.
+        /// Dipakai hanya kalau total detector lebih sedikit dan semua area tetap tercover 0.7 S.
+        /// </summary>
+        private static bool TryMerge(List<Zone> zones, Zone z, double S, List<List<Pt>> polygon)
+        {
+            const double tol = 0.05;
+            int own = z.Nx * z.Ny;
+            Zone best = null; double bx0 = 0, bx1 = 0, by0 = 0, by1 = 0; int bestGain = 0;
+            List<Pt> bestPts = null;
+            foreach (var p in zones)
+            {
+                if (p == z || p.Skipped || p.MergedInto != null || p.Points.Count == 0) continue;
+                bool inY = z.Y0 >= p.GY0 - tol && z.Y1 <= p.GY1 + tol;
+                bool inX = z.X0 >= p.GX0 - tol && z.X1 <= p.GX1 + tol;
+                double x0 = p.GX0, x1 = p.GX1, y0 = p.GY0, y1 = p.GY1;
+                if (inY && Math.Abs(z.X0 - p.GX1) < tol) x1 = z.X1;
+                else if (inY && Math.Abs(z.X1 - p.GX0) < tol) x0 = z.X0;
+                else if (inX && Math.Abs(z.Y0 - p.GY1) < tol) y1 = z.Y1;
+                else if (inX && Math.Abs(z.Y1 - p.GY0) < tol) y0 = z.Y0;
+                else continue;
+
+                var c = new Zone { X0 = p.X0, X1 = p.X1, Y0 = p.Y0, Y1 = p.Y1, GX0 = x0, GX1 = x1, GY0 = y0, GY1 = y1 };
+                FillGrid(c, S, polygon);
+                int gain = own + p.Points.Count - c.Points.Count;
+                if (gain <= bestGain) continue;
+
+                // cek ulang cakupan semua area dengan grid pengganti
+                var pts = new List<Pt>(c.Points);
+                foreach (var o in zones) if (o != p) pts.AddRange(o.Points);
+                bool ok = true;
+                foreach (var o in zones)
+                    if (!Covered(o, pts, 0.7 * S)) { ok = false; break; }
+                if (!ok) continue;
+                best = p; bestGain = gain; bestPts = c.Points;
+                bx0 = x0; bx1 = x1; by0 = y0; by1 = y1;
+            }
+            if (best == null) return false;
+            best.GX0 = bx0; best.GX1 = bx1; best.GY0 = by0; best.GY1 = by1;
+            best.Nx = Math.Max(1, (int)Math.Ceiling(best.GW / S - 1e-9));
+            best.Ny = Math.Max(1, (int)Math.Ceiling(best.GH / S - 1e-9));
+            best.Points = bestPts;
+            z.MergedInto = best;
+            z.Nx = z.Ny = 0;
+            return true;
+        }
+
         // semua titik sampel di area berada dalam radius dari salah satu detector
         private static bool Covered(Zone z, List<Pt> dets, double radius)
         {
-            const int n = 6;
-            for (int i = 0; i <= n; i++)
-                for (int j = 0; j <= n; j++)
+            // sampel tiap <= radius/8 supaya celah di tengah area besar juga terdeteksi
+            int nx = Math.Max(6, (int)Math.Ceiling(z.W / (radius / 8))), ny = Math.Max(6, (int)Math.Ceiling(z.H / (radius / 8)));
+            for (int i = 0; i <= nx; i++)
+                for (int j = 0; j <= ny; j++)
                 {
-                    double x = z.X0 + z.W * i / n, y = z.Y0 + z.H * j / n;
+                    double x = z.X0 + z.W * i / nx, y = z.Y0 + z.H * j / ny;
                     bool ok = false;
                     foreach (var d in dets)
                         if ((d.X - x) * (d.X - x) + (d.Y - y) * (d.Y - y) <= radius * radius + 1e-9) { ok = true; break; }
