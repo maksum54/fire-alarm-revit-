@@ -59,15 +59,15 @@
         <!-- Footer buttons -->
         <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
             <TextBlock x:Name="TxtHint" DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="#6B7280" FontSize="11"
-                       Text="Titik merah = posisi detector. Garis putus = jangkauan S/2. X abu-abu = di luar boundary (dihapus)."/>
+                       Text="Titik merah = posisi detector. Lingkaran = jangkauan 0.7 S. X abu-abu = di luar boundary (dihapus)."/>
             <Button DockPanel.Dock="Right" Content="Tutup" Style="{StaticResource Btn}" Click="Close_Click" IsCancel="True"/>
             <Button DockPanel.Dock="Right" Content="Pilih Space Lain" Style="{StaticResource Btn}" Click="Pick_Click"/>
-            <Button x:Name="BtnPlace" DockPanel.Dock="Right" Content="Tempatkan Detector di Model" Style="{StaticResource PrimaryBtn}" Click="Place_Click" IsDefault="True"/>
+            <Button x:Name="BtnPlace" DockPanel.Dock="Right" Content="Tempatkan ke Model" MinWidth="170" Style="{StaticResource PrimaryBtn}" Click="Place_Click" IsDefault="True"/>
         </DockPanel>
 
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="320"/>
+                <ColumnDefinition Width="350"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
@@ -99,7 +99,7 @@
                             <TextBox x:Name="TbHeight" TextChanged="Input_Changed"/>
                             <TextBlock Text="S listed (m) — bisa diubah sesuai data pabrikan" Style="{StaticResource Label}"/>
                             <TextBox x:Name="TbSpacing" TextChanged="Input_Changed"/>
-                            <CheckBox x:Name="CbReduction" Content="Reduksi ketinggian NFPA 72 (heat detector)" IsChecked="True"
+                            <CheckBox x:Name="CbReduction" Content="Reduksi tinggi NFPA 72 (heat)" IsChecked="True"
                                       Margin="0,8,0,0" Checked="Input_Changed" Unchecked="Input_Changed"/>
                             <TextBlock Text="Family detector" Style="{StaticResource Label}"/>
                             <ComboBox x:Name="CbFamily" SelectionChanged="Input_Changed" DisplayMemberPath="Display" Padding="6,4"/>
