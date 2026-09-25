@@ -36,8 +36,8 @@ namespace FireAlarmAddin.UI
         private readonly SpaceGeometry _geo;
         private bool _loading = true;
         private double _smokeS = NfpaCalculator.DefaultSmokeSpacing, _heatS = NfpaCalculator.DefaultHeatSpacing;
-        // jumlah per arah yang diatur user: key = index area (0 untuk grid tanpa area)
-        private readonly Dictionary<int, (int Nx, int Ny)> _manual = new Dictionary<int, (int Nx, int Ny)>();
+        // jumlah kolom × baris yang diatur user (null = otomatis)
+        private (int Nx, int Ny)? _manual;
 
         public FireAlarmWindow(SpaceGeometry geo, IList<Autodesk.Revit.DB.FamilySymbol> symbols, Settings previous)
         {
@@ -85,7 +85,7 @@ namespace FireAlarmAddin.UI
             _loading = true;
             TbSpacing.Text = F(SelectedType == DetectorType.Heat ? _heatS : _smokeS);
             _loading = false;
-            _manual.Clear();
+            _manual = null;
             Recalculate();
         }
 
@@ -96,7 +96,7 @@ namespace FireAlarmAddin.UI
             {
                 if (SelectedType == DetectorType.Heat) _heatS = s; else _smokeS = s;
             }
-            if (sender != CbFamily) _manual.Clear(); // S/tinggi berubah -> jumlah otomatis dihitung ulang
+            if (sender != CbFamily) _manual = null; // S/tinggi berubah -> jumlah otomatis dihitung ulang
             Recalculate();
         }
 
@@ -136,95 +136,69 @@ namespace FireAlarmAddin.UI
                 "S listed = " + F(r.ListedSpacing) + " m" +
                 (reduce ? "  × " + F(r.HeightFactor) + " (tabel reduksi tinggi " + F(h) + " m" + ")" : "") + "\n" +
                 "S desain = " + F(r.DesignSpacing) + " m\n" +
-                (r.Zones.Count > 0 ? ZoneDetail(r) :
-                (r.Manual ? "Diatur manual: " + r.CountX + " × " + r.CountY + " (otomatis " + r.AutoCountX + " × " + r.AutoCountY + ")\n" : "") +
-                "Arah panjang: ⌈" + F(_geo.Length) + " / " + F(r.DesignSpacing) + "⌉ = " + r.AutoCountX +
-                "  → jarak " + F(r.ActualSpacingX) + " m, tepi " + F(r.ActualSpacingX / 2) + " m\n" +
-                "Arah lebar: ⌈" + F(_geo.Width) + " / " + F(r.DesignSpacing) + "⌉ = " + r.AutoCountY +
-                "  → jarak " + F(r.ActualSpacingY) + " m, tepi " + F(r.ActualSpacingY / 2) + " m\n" +
-                "Grid " + r.CountX + " × " + r.CountY + " = " + (r.CountX * r.CountY) +
-                (r.Removed.Count > 0 ? "\n" + r.Removed.Count + " titik di luar boundary otomatis dihapus → " + r.Quantity + " unit" : ""));
+                GridDetail(r);
             var warn = r.Warning ?? "";
             if (r.Violations.Count > 0)
-                warn = (warn.Length > 0 ? warn + "\n" : "") + "⚠ Jumlah manual tidak memenuhi NFPA 72:\n• " + string.Join("\n• ", r.Violations);
+                warn = (warn.Length > 0 ? warn + "\n" : "") + "⚠ Tidak memenuhi NFPA 72:\n• " + string.Join("\n• ", r.Violations);
             TxtWarning.Text = warn;
             TxtWarning.Foreground = r.Violations.Count > 0 ? Brushes.Firebrick : new SolidColorBrush(Color.FromRgb(0xB4, 0x53, 0x09));
-            BuildZoneEditor(r);
+            BuildGridEditor(r);
             DrawPreview();
         }
 
-        private string ZoneDetail(CalcResult r)
+        private string GridDetail(CalcResult r)
         {
             var sb = new System.Text.StringBuilder();
-            if (r.Zones.Count > 1) sb.Append("Space dipecah jadi " + r.Zones.Count + " area (garis biru):\n");
-            int k = 1;
-            foreach (var z in r.Zones)
-            {
-                sb.Append((r.Zones.Count > 1 ? "Area " + k++ + ": " : "") + F(z.W) + " × " + F(z.H) + " m");
-                if (z.Skipped) { sb.Append(" → sudah tercover (0.7 S), 0 unit\n"); continue; }
-                if (z.MergedInto != null)
-                {
-                    sb.Append(" → area sempit, digabung ke grid Area " + (r.Zones.IndexOf(z.MergedInto) + 1) + ", 0 unit\n");
-                    continue;
-                }
-                bool wider = Math.Abs(z.GW - z.W) > 0.01 || Math.Abs(z.GH - z.H) > 0.01;
-                if (wider) sb.Append(", grid diperlebar jadi " + F(z.GW) + " × " + F(z.GH) + " m");
-                int n = z.Points.Count;
-                if (z.Manual)
-                {
-                    sb.Append(" → diatur manual " + z.Nx + " × " + z.Ny + " (otomatis " + z.AutoNx + " × " + z.AutoNy + ")" +
-                              (n != z.Nx * z.Ny ? ", " + (z.Nx * z.Ny - n) + " titik di luar boundary" : "") + " = " + n + " unit\n");
-                    sb.Append("   jarak " + F(z.Sx) + " / " + F(z.Sy) + " m, tepi dinding " + F(z.Sx / 2) + " / " + F(z.Sy / 2) + " m\n");
-                    continue;
-                }
-                sb.Append(" → ⌈" + F(z.GW) + "/" + F(r.DesignSpacing) + "⌉ × ⌈" + F(z.GH) + "/" + F(r.DesignSpacing) + "⌉ = " +
-                          z.Nx + " × " + z.Ny + (n != z.Nx * z.Ny ? " (" + (z.Nx * z.Ny - n) + " titik di luar boundary)" : "") +
-                          " = " + n + " unit\n");
-                sb.Append("   jarak " + F(z.Sx) + " / " + F(z.Sy) + " m, tepi dinding " + F(z.Sx / 2) + " / " + F(z.Sy / 2) + " m\n");
-            }
-            sb.Append("Total = " + r.Quantity + " unit");
+            sb.Append("Satu grid untuk seluruh space (kolom & baris lurus menerus):\n");
+            sb.Append("Arah panjang: ⌈" + F(_geo.Length) + " / " + F(r.DesignSpacing) + "⌉ = " + r.AutoCountX + " kolom\n");
+            sb.Append("Arah lebar: ⌈" + F(_geo.Width) + " / " + F(r.DesignSpacing) + "⌉ = " + r.AutoCountY + " baris\n");
+            if (r.Manual)
+                sb.Append("Diatur manual: " + r.CountX + " × " + r.CountY + " (otomatis " + r.AutoCountX + " × " + r.AutoCountY + ")\n");
+            else if (r.CountX != r.AutoCountX || r.CountY != r.AutoCountY)
+                sb.Append("Dipakai " + r.CountX + " × " + r.CountY + " agar seluruh space tercover 0.7 S\n");
+            sb.Append("Kolom (x): " + Spacing(r.LinesX, _geo.Length) + "\n");
+            sb.Append("Baris (y): " + Spacing(r.LinesY, _geo.Width) + "\n");
+            if (r.Adjusted) sb.Append("Garis digeser dari pembagian rata agar pojok/coakan tercover 0.7 S\n");
+            sb.Append("Grid " + r.CountX + " × " + r.CountY + " = " + (r.CountX * r.CountY));
+            if (r.Removed.Count > 0) sb.Append(", " + r.Removed.Count + " titik di luar boundary dihapus");
+            sb.Append("\nJarak terjauh ke detector = " + F(r.MaxDistance) + " m (maks 0.7 S = " + F(0.7 * r.DesignSpacing) + " m)");
+            sb.Append("\nTotal = " + r.Quantity + " unit");
             return sb.ToString();
         }
 
-        // baris editor jumlah kolom × baris per area (tombol − / +, dibangun ulang tiap hitung)
-        private void BuildZoneEditor(CalcResult r)
+        // "tepi 4.49 | jarak 8.99, 8.99, 8.99 | tepi 4.49"
+        private static string Spacing(List<double> lines, double extent)
         {
-            ZoneEditor.Children.Clear();
-            var rows = new List<(int Key, string Name, int Nx, int Ny, int AutoNx, int AutoNy, double Sx, double Sy)>();
-            if (r.Zones.Count > 0)
-            {
-                for (int k = 0; k < r.Zones.Count; k++)
-                {
-                    var z = r.Zones[k];
-                    if (!z.Editable) continue;
-                    rows.Add((k, r.Zones.Count > 1 ? "Area " + (k + 1) : "Grid", z.Nx, z.Ny, z.AutoNx, z.AutoNy, z.Sx, z.Sy));
-                }
-            }
-            else if (r.CountX > 0)
-                rows.Add((0, "Grid", r.CountX, r.CountY, r.AutoCountX, r.AutoCountY, r.ActualSpacingX, r.ActualSpacingY));
-
-            ManualBox.Visibility = rows.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-            BtnResetManual.IsEnabled = _manual.Count > 0;
-            foreach (var row in rows)
-            {
-                var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
-                sp.Children.Add(new TextBlock { Text = row.Name, Width = 52, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 });
-                AddStepper(sp, row.Key, row.Nx, row.Ny, true);
-                sp.Children.Add(new TextBlock { Text = "×", Margin = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center });
-                AddStepper(sp, row.Key, row.Nx, row.Ny, false);
-                bool changed = row.Nx != row.AutoNx || row.Ny != row.AutoNy;
-                sp.Children.Add(new TextBlock
-                {
-                    Text = "  = " + (row.Nx * row.Ny) + (changed ? "  (auto " + row.AutoNx + "×" + row.AutoNy + ")" : "  (auto)"),
-                    VerticalAlignment = VerticalAlignment.Center, FontSize = 11,
-                    Foreground = changed ? Brushes.Firebrick : Brushes.DimGray,
-                    ToolTip = "Jarak " + F(row.Sx) + " / " + F(row.Sy) + " m"
-                });
-                ZoneEditor.Children.Add(sp);
-            }
+            if (lines.Count == 0) return "-";
+            var gaps = new List<string>();
+            for (int i = 1; i < lines.Count; i++) gaps.Add(F(lines[i] - lines[i - 1]));
+            return "tepi " + F(lines[0]) + (gaps.Count > 0 ? " | jarak " + string.Join(", ", gaps) : "") +
+                   " | tepi " + F(extent - lines[lines.Count - 1]) + " m";
         }
 
-        private void AddStepper(Panel host, int key, int nx, int ny, bool isX)
+        // editor jumlah kolom × baris (tombol − / +, dibangun ulang tiap hitung)
+        private void BuildGridEditor(CalcResult r)
+        {
+            GridEditor.Children.Clear();
+            ManualBox.Visibility = r.CountX > 0 ? Visibility.Visible : Visibility.Collapsed;
+            BtnResetManual.IsEnabled = _manual.HasValue;
+            if (r.CountX == 0) return;
+
+            var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 0) };
+            sp.Children.Add(new TextBlock { Text = "Grid", Width = 40, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 });
+            AddStepper(sp, r.CountX, r.CountY, true);
+            sp.Children.Add(new TextBlock { Text = "×", Margin = new Thickness(6, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center });
+            AddStepper(sp, r.CountX, r.CountY, false);
+            sp.Children.Add(new TextBlock
+            {
+                Text = "  → " + r.Quantity + " unit" + (r.Manual ? "  (auto " + r.AutoCountX + "×" + r.AutoCountY + ")" : "  (auto)"),
+                VerticalAlignment = VerticalAlignment.Center, FontSize = 11,
+                Foreground = r.Manual ? Brushes.Firebrick : Brushes.DimGray
+            });
+            GridEditor.Children.Add(sp);
+        }
+
+        private void AddStepper(Panel host, int nx, int ny, bool isX)
         {
             int v = isX ? nx : ny;
             Button B(string t, int delta) => new Button
@@ -238,7 +212,7 @@ namespace FireAlarmAddin.UI
             RoutedEventHandler click = (s, e) =>
             {
                 int d = (int)((Button)s).Tag;
-                _manual[key] = isX ? (nx + d, ny) : (nx, ny + d);
+                _manual = isX ? (nx + d, ny) : (nx, ny + d);
                 Recalculate();
             };
             minus.Click += click; plus.Click += click;
@@ -250,7 +224,7 @@ namespace FireAlarmAddin.UI
 
         private void ResetManual_Click(object sender, RoutedEventArgs e)
         {
-            _manual.Clear();
+            _manual = null;
             Recalculate();
         }
 
@@ -277,29 +251,9 @@ namespace FireAlarmAddin.UI
             }
             // grid lines
             var gridBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0x9A, 0x9A));
-            if (r.Zones.Count > 0)
-            {
-                foreach (var z in r.Zones)
-                {
-                    if (z.Skipped || z.MergedInto != null) continue;
-                    for (int i = 1; i < z.Nx; i++) Line(P(z.GX0 + i * z.Sx, z.GY0), P(z.GX0 + i * z.Sx, z.GY1), gridBrush, 0.8, true);
-                    for (int j = 1; j < z.Ny; j++) Line(P(z.GX0, z.GY0 + j * z.Sy), P(z.GX1, z.GY0 + j * z.Sy), gridBrush, 0.8, true);
-                }
-                if (r.Zones.Count > 1) // batas antar area
-                    foreach (var z in r.Zones)
-                    {
-                        var rc = new Rectangle { Width = z.W * scale, Height = z.H * scale, Stroke = new SolidColorBrush(Color.FromRgb(0x3B, 0x82, 0xF6)),
-                            StrokeThickness = 1, StrokeDashArray = new DoubleCollection { 2, 3 } };
-                        var tl = P(z.X0, z.Y1);
-                        Canvas.SetLeft(rc, tl.X); Canvas.SetTop(rc, tl.Y);
-                        Preview.Children.Add(rc);
-                    }
-            }
-            else
-            {
-                for (int i = 1; i < r.CountX; i++) Line(P(i * r.ActualSpacingX, 0), P(i * r.ActualSpacingX, _geo.Width), gridBrush, 0.8, true);
-                for (int j = 1; j < r.CountY; j++) Line(P(0, j * r.ActualSpacingY), P(_geo.Length, j * r.ActualSpacingY), gridBrush, 0.8, true);
-            }
+            // garis kolom & baris grid (lurus menerus di seluruh space)
+            foreach (var x in r.LinesX) Line(P(x, 0), P(x, _geo.Width), gridBrush, 0.8, true);
+            foreach (var y in r.LinesY) Line(P(0, y), P(_geo.Length, y), gridBrush, 0.8, true);
 
             // coverage + detectors
             double cov = r.DesignSpacing * 0.7 * scale; // radius 0.7S (NFPA)

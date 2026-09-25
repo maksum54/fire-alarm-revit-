@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 
 namespace FireAlarmAddin.Core
 {
@@ -16,40 +18,24 @@ namespace FireAlarmAddin.Core
         public double ListedSpacing;     // S listed (m)
         public double HeightFactor;      // faktor reduksi ketinggian (tabel heat NFPA 72)
         public double DesignSpacing;     // S efektif (m)
-        public int CountX, CountY;       // grid di bounding box
-        public int AutoCountX, AutoCountY; // CountX/Y hasil otomatis (sebelum diatur user)
-        public double ActualSpacingX, ActualSpacingY;
-        public List<Pt> Points = new List<Pt>();  // koordinat lokal (m) yang ada di dalam space
-        public List<Pt> Removed = new List<Pt>(); // titik grid di luar boundary (dihapus otomatis)
+        public int CountX, CountY;       // jumlah kolom × baris grid
+        public int AutoCountX, AutoCountY; // hasil otomatis (sebelum diatur user)
+        public List<double> LinesX = new List<double>(); // posisi garis kolom (m, lokal)
+        public List<double> LinesY = new List<double>(); // posisi garis baris (m, lokal)
+        public List<Pt> Points = new List<Pt>();  // titik potong grid yang ada di dalam space
+        public List<Pt> Removed = new List<Pt>(); // titik potong grid di luar boundary (dihapus otomatis)
         public int Quantity => Points.Count;
-        public List<Zone> Zones = new List<Zone>(); // persegi panjang hasil pecahan boundary
+        public double MaxDistance;       // jarak terjauh titik mana pun di space ke detector terdekat
+        public bool Adjusted;            // posisi garis digeser dari pembagian rata agar tercover 0.7 S
+        public bool Manual;              // jumlah kolom × baris diatur user
+        public List<string> Violations = new List<string>();
         public string Warning;
-        public bool Manual;               // ada jumlah per arah yang diatur user
-        public List<string> Violations = new List<string>(); // pelanggaran jarak/cakupan akibat jumlah manual
     }
 
-    /// <summary>Satu area persegi panjang dengan grid detector sendiri (1/2 S dari dinding area).</summary>
-    public class Zone
-    {
-        public double X0, Y0, X1, Y1;
-        // bentang grid detector; = area sendiri, atau lebih lebar kalau area sempit di sebelahnya digabung
-        public double GX0, GY0, GX1, GY1;
-        public int Nx, Ny;
-        public double W => X1 - X0;
-        public double H => Y1 - Y0;
-        public double GW => GX1 - GX0;
-        public double GH => GY1 - GY0;
-        public double Sx => GW / Nx;
-        public double Sy => GH / Ny;
-        public bool Skipped; // area kecil yang sudah tercover detector area lain (radius 0.7 S)
-        public int AutoNx, AutoNy; // jumlah hasil hitungan otomatis (sebelum diatur user)
-        public bool Manual;        // Nx/Ny diatur user
-        public bool Editable => !Skipped && MergedInto == null && Nx > 0;
-        public Zone MergedInto; // area sempit yang grid-nya ikut area ini (0 unit sendiri)
-        public List<Pt> Points = new List<Pt>();
-    }
-
-    /// <summary>Perhitungan jumlah detector berdasarkan NFPA 72.</summary>
+    /// <summary>
+    /// Perhitungan jumlah detector berdasarkan NFPA 72. Satu space = satu grid: kolom dan baris lurus menerus
+    /// di seluruh ruangan, titik potong di luar boundary dihapus.
+    /// </summary>
     public static class NfpaCalculator
     {
         public const double DefaultSmokeSpacing = 9.0;
@@ -74,12 +60,12 @@ namespace FireAlarmAddin.Core
 
         /// <summary>
         /// length/width dalam meter (sistem lokal space), polygon = boundary dalam sistem lokal
-        /// (origin di pojok kiri bawah bounding box). Detector pertama 1/2 S dari tepi, lalu S antar detector.
+        /// (origin di pojok kiri bawah bounding box). Kolom/baris pertama 1/2 S dari tepi, jarak antar garis &lt;= S,
+        /// dan seluruh space harus dalam jangkauan 0.7 S dari detector.
         /// </summary>
-        /// <param name="manual">jumlah per arah dari user: key = index area (0 untuk grid tanpa area), value = (Nx, Ny)</param>
+        /// <param name="manual">jumlah kolom × baris dari user; null = otomatis (jumlah detector paling sedikit)</param>
         public static CalcResult Calculate(double length, double width, double height, DetectorType type,
-            double listedSpacing, bool applyHeightReduction, List<List<Pt>> polygon,
-            IDictionary<int, (int Nx, int Ny)> manual = null)
+            double listedSpacing, bool applyHeightReduction, List<List<Pt>> polygon, (int Nx, int Ny)? manual = null)
         {
             var r = new CalcResult { ListedSpacing = listedSpacing, HeightFactor = 1.0 };
             // applyHeightReduction untuk smoke = opsi konservatif user (NFPA hanya mensyaratkan untuk heat)
@@ -90,246 +76,274 @@ namespace FireAlarmAddin.Core
 
             r.DesignSpacing = listedSpacing * r.HeightFactor;
             if (r.DesignSpacing <= 0 || length <= 0 || width <= 0) return r;
+            if (polygon != null && polygon.Count == 0) polygon = null;
 
-            if (polygon != null && polygon.Count > 0 && LayoutByZones(r, polygon))
+            double S = r.DesignSpacing, R = 0.7 * S;
+            r.AutoCountX = Math.Max(1, (int)Math.Ceiling(length / S - 1e-9));
+            r.AutoCountY = Math.Max(1, (int)Math.Ceiling(width / S - 1e-9));
+            // sampel kasar untuk mencari posisi garis, sampel halus untuk verifikasi akhir
+            var samples = Samples(length, width, polygon, R / 12);
+            var fine = Samples(length, width, polygon, 0.1);
+
+            Layout best = null;
+            if (manual.HasValue && manual.Value.Nx > 0 && manual.Value.Ny > 0)
             {
-                if (manual != null && manual.Count > 0) ApplyManual(r, polygon, manual);
-                return r;
+                best = Solve(manual.Value.Nx, manual.Value.Ny, length, width, S, R, polygon, samples, fine);
+                r.Manual = manual.Value.Nx != r.AutoCountX || manual.Value.Ny != r.AutoCountY;
             }
-
-            // fallback: grid di bounding box, titik di luar boundary dihapus
-            r.CountX = Math.Max(1, (int)Math.Ceiling(length / r.DesignSpacing - 1e-9));
-            r.CountY = Math.Max(1, (int)Math.Ceiling(width / r.DesignSpacing - 1e-9));
-            r.AutoCountX = r.CountX; r.AutoCountY = r.CountY;
-            if (manual != null && manual.TryGetValue(0, out var m0) && m0.Nx > 0 && m0.Ny > 0)
+            else
             {
-                r.Manual = m0.Nx != r.CountX || m0.Ny != r.CountY;
-                r.CountX = m0.Nx; r.CountY = m0.Ny;
-            }
-            r.ActualSpacingX = length / r.CountX;
-            r.ActualSpacingY = width / r.CountY;
-
-            for (int i = 0; i < r.CountX; i++)
-                for (int j = 0; j < r.CountY; j++)
+                // coba beberapa jumlah kolom × baris (dari yang terkecil), pilih yang memenuhi dengan detector paling sedikit
+                var combos = new List<(int nx, int ny)>();
+                for (int nx = r.AutoCountX; nx <= r.AutoCountX + 2; nx++)
+                    for (int ny = r.AutoCountY; ny <= r.AutoCountY + 2; ny++) combos.Add((nx, ny));
+                int okSize = int.MaxValue;
+                foreach (var c in combos.OrderBy(c => c.nx * c.ny))
                 {
-                    var p = new Pt(r.ActualSpacingX * (i + 0.5), r.ActualSpacingY * (j + 0.5));
-                    if (polygon == null || polygon.Count == 0 || Inside(p, polygon))
-                        r.Points.Add(p);
-                    else
-                        r.Removed.Add(p);
+                    if (c.nx * c.ny > okSize) break;
+                    var l = Solve(c.nx, c.ny, length, width, S, R, polygon, samples, fine);
+                    if (best == null || Better(l, best)) best = l;
+                    if (l.Ok) okSize = Math.Min(okSize, c.nx * c.ny);
+                }
+            }
+
+            r.LinesX = best.Xs; r.LinesY = best.Ys;
+            r.CountX = best.Xs.Count; r.CountY = best.Ys.Count;
+            r.Adjusted = best.Adjusted;
+            foreach (var x in best.Xs)
+                foreach (var y in best.Ys)
+                {
+                    var p = new Pt(x, y);
+                    if (polygon == null || Inside(p, polygon)) r.Points.Add(p); else r.Removed.Add(p);
                 }
             if (r.Points.Count == 0) r.Points.Add(InteriorPoint(length, width, polygon));
-            if (r.Manual)
+            r.MaxDistance = MaxDist(fine, best.Xs, best.Ys, polygon, r.Points);
+
+            if (r.Manual || !best.Ok)
             {
-                if (r.ActualSpacingX > r.DesignSpacing + 1e-6 || r.ActualSpacingY > r.DesignSpacing + 1e-6)
-                    r.Violations.Add("Jarak " + R2(r.ActualSpacingX) + " / " + R2(r.ActualSpacingY) + " m melebihi S = " + R2(r.DesignSpacing) + " m");
-                var all = new Zone { X0 = 0, Y0 = 0, X1 = length, Y1 = width };
-                if (!Covered(all, r.Points, 0.7 * r.DesignSpacing, polygon != null && polygon.Count > 0 ? polygon : null))
-                    r.Violations.Add("Ada bagian space di luar jangkauan 0.7 S = " + R2(0.7 * r.DesignSpacing) + " m");
+                var gx = Gaps(best.Xs, length); var gy = Gaps(best.Ys, width);
+                if (gx.Max() > S + 1e-6 || gy.Max() > S + 1e-6)
+                    r.Violations.Add("Jarak antar detector " + F(gx.Max()) + " / " + F(gy.Max()) + " m melebihi S = " + F(S) + " m");
+                if (r.MaxDistance > R + 1e-6)
+                    r.Violations.Add("Ada bagian space " + F(r.MaxDistance) + " m dari detector terdekat (> 0.7 S = " + F(R) + " m)");
             }
             return r;
         }
 
-        private static string R2(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        private static string F(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
 
-        /// <summary>
-        /// Terapkan jumlah per arah dari user ke area bergrid, lalu cek aturan NFPA: jarak antar detector
-        /// &lt;= S (otomatis tepi dinding &lt;= 1/2 S) dan seluruh space dalam jangkauan 0.7 S.
-        /// </summary>
-        private static void ApplyManual(CalcResult r, List<List<Pt>> polygon, IDictionary<int, (int Nx, int Ny)> manual)
+        private class Layout
         {
-            double S = r.DesignSpacing;
-            for (int k = 0; k < r.Zones.Count; k++)
-            {
-                var z = r.Zones[k];
-                if (!z.Editable || !manual.TryGetValue(k, out var m) || m.Nx < 1 || m.Ny < 1) continue;
-                if (m.Nx == z.Nx && m.Ny == z.Ny) continue;
-                z.Nx = m.Nx; z.Ny = m.Ny; z.Manual = true; r.Manual = true;
-                z.Points.Clear();
-                for (int i = 0; i < z.Nx; i++)
-                    for (int j = 0; j < z.Ny; j++)
-                    {
-                        var p = new Pt(z.GX0 + z.Sx * (i + 0.5), z.GY0 + z.Sy * (j + 0.5));
-                        if (Inside(p, polygon)) z.Points.Add(p);
-                    }
-            }
-            if (!r.Manual) return;
-            r.Points = AllPoints(r.Zones);
+            public List<double> Xs, Ys;
+            public int Count;
+            public double Violation; // 0 = seluruh space tercover 0.7 S
+            public bool Adjusted;
+            public bool Ok => Violation <= 1e-9;
+        }
 
-            for (int k = 0; k < r.Zones.Count; k++)
-            {
-                var z = r.Zones[k];
-                if (z.Manual && (z.Sx > S + 1e-6 || z.Sy > S + 1e-6))
-                    r.Violations.Add("Area " + (k + 1) + ": jarak " + R2(z.Sx) + " / " + R2(z.Sy) + " m melebihi S = " + R2(S) +
-                                     " m (tepi dinding " + R2(z.Sx / 2) + " / " + R2(z.Sy / 2) + " m > 1/2 S)");
-            }
-            for (int k = 0; k < r.Zones.Count; k++)
-                if (!Covered(r.Zones[k], r.Points, 0.7 * S))
-                    r.Violations.Add("Area " + (k + 1) + ": ada bagian di luar jangkauan 0.7 S = " + R2(0.7 * S) + " m");
-            var main = r.Zones[0];
-            r.CountX = main.Nx; r.CountY = main.Ny;
-            r.ActualSpacingX = main.Sx; r.ActualSpacingY = main.Sy;
+        private static bool Better(Layout a, Layout b)
+        {
+            if (a.Ok != b.Ok) return a.Ok;
+            if (!a.Ok) return a.Violation < b.Violation;
+            if (a.Count != b.Count) return a.Count < b.Count;
+            return !a.Adjusted && b.Adjusted; // sama banyak: pilih yang jaraknya rata
+        }
+
+        // tepi & jarak garis: [tepi awal, jarak antar garis..., tepi akhir]; tepi dikali 2 agar sebanding dengan S
+        private static List<double> Gaps(List<double> lines, double extent)
+        {
+            var g = new List<double> { lines[0] * 2 };
+            for (int i = 1; i < lines.Count; i++) g.Add(lines[i] - lines[i - 1]);
+            g.Add((extent - lines[lines.Count - 1]) * 2);
+            return g;
         }
 
         /// <summary>
-        /// Pecah boundary jadi persegi panjang terbesar secara berurutan. Tiap persegi panjang diberi grid
-        /// sendiri: detector 1/2 S dari dinding area, S antar detector (dibagi rata). Area kecil yang seluruhnya
-        /// sudah dalam radius 0.7 S dari detector lain dilewati.
+        /// Grid nx × ny: mulai dari pembagian rata (1/2 S dari tepi), lalu kalau ada bagian space yang di luar 0.7 S
+        /// (mis. pojok coakan), garis kolom/baris digeser sedikit demi sedikit sampai tercover. Garis tetap lurus
+        /// menerus, jarak antar garis tetap &lt;= S dan garis terluar tetap &lt;= 1/2 S dari tepi.
         /// </summary>
-        private static bool LayoutByZones(CalcResult r, List<List<Pt>> polygon)
+        private static Layout Solve(int nx, int ny, double length, double width, double S, double R,
+            List<List<Pt>> polygon, List<Pt> samples, List<Pt> fine)
         {
-            double S = r.DesignSpacing;
-            var xs = Coords(polygon, true);
-            var ys = Coords(polygon, false);
-            int nc = xs.Count - 1, nr = ys.Count - 1;
-            if (nc < 1 || nr < 1 || nc > 60 || nr > 60) return false; // terlalu kompleks (mis. lengkung) -> fallback
-
-            // sel grid (dari koordinat vertex) yang berada di dalam boundary
-            var free = new bool[nc, nr];
-            for (int i = 0; i < nc; i++)
-                for (int j = 0; j < nr; j++)
-                    free[i, j] = Inside(new Pt((xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2), polygon);
-
-            while (true)
+            var xs = Uniform(nx, length); var ys = Uniform(ny, width);
+            bool adjusted = false;
+            double v = Violation(xs, ys, polygon, fine, R);
+            if (v > 1e-9)
             {
-                // persegi panjang (luas nyata) terbesar dari sel yang masih bebas
-                double best = 0; int bi0 = 0, bi1 = 0, bj0 = 0, bj1 = 0;
-                for (int i0 = 0; i0 < nc; i0++)
-                    for (int j0 = 0; j0 < nr; j0++)
+                // cari dengan sampel kasar & radius sedikit dikecilkan (cadangan untuk celah antar sampel)
+                double rc = R - 0.1;
+                double vc = Violation(xs, ys, polygon, samples, rc);
+                double[] steps = { 2, 1, 0.5, 0.25, 0.1, 0.05 };
+                for (int pass = 0; pass < 80 && vc > 1e-9; pass++)
+                {
+                    bool improved = false;
+                    foreach (var axis in new[] { xs, ys })
                     {
-                        if (!free[i0, j0]) continue;
-                        int jMax = nr - 1;
-                        for (int i1 = i0; i1 < nc && free[i1, j0]; i1++)
-                        {
-                            int j1 = j0;
-                            while (j1 + 1 <= jMax && free[i1, j1 + 1]) j1++;
-                            jMax = j1;
-                            double a = (xs[i1 + 1] - xs[i0]) * (ys[jMax + 1] - ys[j0]);
-                            if (a > best) { best = a; bi0 = i0; bi1 = i1; bj0 = j0; bj1 = jMax; }
-                        }
+                        double ext = axis == xs ? length : width;
+                        for (int i = 0; i < axis.Count; i++)
+                            foreach (var st in steps)
+                                foreach (var d in new[] { st, -st })
+                                {
+                                    var old = axis.ToList();
+                                    if (Move(axis, i, d, ext, S))
+                                    {
+                                        double nv = Violation(xs, ys, polygon, samples, rc);
+                                        if (nv < vc - 1e-9) { vc = nv; improved = true; goto nextLine; }
+                                    }
+                                    for (int k = 0; k < axis.Count; k++) axis[k] = old[k];
+                                }
+                            nextLine:;
                     }
-                if (best <= 1e-6) break;
-                for (int i = bi0; i <= bi1; i++)
-                    for (int j = bj0; j <= bj1; j++) free[i, j] = false;
-
-                var z = new Zone { X0 = xs[bi0], X1 = xs[bi1 + 1], Y0 = ys[bj0], Y1 = ys[bj1 + 1] };
-                z.GX0 = z.X0; z.GX1 = z.X1; z.GY0 = z.Y0; z.GY1 = z.Y1;
-                FillGrid(z, S, null);
-                z.Points.Clear();
-                r.Zones.Add(z);
-
-                var all = AllPoints(r.Zones);
-                if (all.Count > 0 && Covered(z, all, 0.7 * S)) { z.Skipped = true; continue; }
-                if (TryMerge(r.Zones, z, S, polygon)) continue;
-                FillGrid(z, S, null);
+                    if (!improved) break;
+                }
+                for (int k = 0; k < xs.Count; k++) xs[k] = Round(xs[k]);
+                for (int k = 0; k < ys.Count; k++) ys[k] = Round(ys[k]);
+                double nvFine = Violation(xs, ys, polygon, fine, R);
+                if (nvFine < v) { v = nvFine; adjusted = true; }
+                else { xs = Uniform(nx, length); ys = Uniform(ny, width); }
             }
-            r.Points = AllPoints(r.Zones);
-            if (r.Points.Count == 0) return false;
-            foreach (var z in r.Zones) { z.AutoNx = z.Nx; z.AutoNy = z.Ny; }
+            int count = 0;
+            foreach (var x in xs) foreach (var y in ys) if (polygon == null || Inside(new Pt(x, y), polygon)) count++;
+            return new Layout { Xs = xs, Ys = ys, Count = count, Violation = v, Adjusted = adjusted };
+        }
 
-            var main = r.Zones[0];
-            r.CountX = main.Nx; r.CountY = main.Ny;
-            r.ActualSpacingX = main.Sx; r.ActualSpacingY = main.Sy;
+        /// <summary>
+        /// Geser garis i sejauh d; garis tetangga ikut terseret bila jarak antar garis jadi &gt; S atau &lt; jarak minimum.
+        /// </summary>
+        private static bool Move(List<double> axis, int i, double d, double extent, double S)
+        {
+            const double minGap = 0.3;
+            axis[i] += d;
+            for (int j = i - 1; j >= 0; j--)
+            {
+                if (axis[j + 1] - axis[j] > S) axis[j] = axis[j + 1] - S;
+                if (axis[j + 1] - axis[j] < minGap) axis[j] = axis[j + 1] - minGap;
+            }
+            for (int j = i + 1; j < axis.Count; j++)
+            {
+                if (axis[j] - axis[j - 1] > S) axis[j] = axis[j - 1] + S;
+                if (axis[j] - axis[j - 1] < minGap) axis[j] = axis[j - 1] + minGap;
+            }
+            return Valid(axis, extent, S);
+        }
+
+        private static double Round(double v) => Math.Round(v, 2);
+
+        private static List<double> Uniform(int n, double extent)
+        {
+            var l = new List<double>();
+            for (int i = 0; i < n; i++) l.Add(extent / n * (i + 0.5));
+            return l;
+        }
+
+        private static bool Valid(List<double> lines, double extent, double S)
+        {
+            const double eps = 1e-6, minGap = 0.3;
+            if (lines[0] <= 0 || lines[0] > S / 2 + eps) return false;
+            if (lines[lines.Count - 1] >= extent || extent - lines[lines.Count - 1] > S / 2 + eps) return false;
+            for (int i = 1; i < lines.Count; i++)
+            {
+                double g = lines[i] - lines[i - 1];
+                if (g < minGap || g > S + eps) return false;
+            }
             return true;
         }
 
-        // grid detector di bentang GX/GY: 1/2 S dari tepi, S antar detector (dibagi rata)
-        private static void FillGrid(Zone z, double S, List<List<Pt>> polygon)
+        // jumlah kuadrat kelebihan jarak (d - R) di titik sampel; 0 = semua dalam jangkauan
+        private static double Violation(List<double> xs, List<double> ys, List<List<Pt>> polygon, List<Pt> samples, double R)
         {
-            z.Nx = Math.Max(1, (int)Math.Ceiling(z.GW / S - 1e-9));
-            z.Ny = Math.Max(1, (int)Math.Ceiling(z.GH / S - 1e-9));
-            z.Points.Clear();
-            for (int i = 0; i < z.Nx; i++)
-                for (int j = 0; j < z.Ny; j++)
-                {
-                    var p = new Pt(z.GX0 + z.Sx * (i + 0.5), z.GY0 + z.Sy * (j + 0.5));
-                    if (polygon == null || Inside(p, polygon)) z.Points.Add(p);
-                }
+            var g = new GridIndex(xs, ys, polygon);
+            if (g.Count == 0) return double.MaxValue;
+            double sum = 0;
+            foreach (var s in samples)
+            {
+                double d = g.Nearest(s.X, s.Y, R);
+                if (d > R + 1e-9) sum += (d - R) * (d - R);
+            }
+            return sum;
         }
 
-        private static List<Pt> AllPoints(List<Zone> zones)
+        private static double MaxDist(List<Pt> samples, List<double> xs, List<double> ys, List<List<Pt>> polygon, List<Pt> fallback)
+        {
+            var g = new GridIndex(xs, ys, polygon);
+            if (g.Count == 0) g = new GridIndex(fallback);
+            double worst = 0;
+            foreach (var s in samples) worst = Math.Max(worst, g.Nearest(s.X, s.Y, double.MaxValue));
+            return worst;
+        }
+
+        /// <summary>Pencarian detector terdekat cepat: cek titik potong grid di sekitar sampel dulu, baru semua.</summary>
+        private class GridIndex
+        {
+            private readonly double[] _xs, _ys;
+            private readonly bool[,] _in;
+            private readonly List<Pt> _all = new List<Pt>();
+            public int Count => _all.Count;
+
+            public GridIndex(List<double> xs, List<double> ys, List<List<Pt>> polygon)
+            {
+                _xs = xs.ToArray(); _ys = ys.ToArray();
+                _in = new bool[_xs.Length, _ys.Length];
+                for (int i = 0; i < _xs.Length; i++)
+                    for (int j = 0; j < _ys.Length; j++)
+                    {
+                        var p = new Pt(_xs[i], _ys[j]);
+                        _in[i, j] = polygon == null || Inside(p, polygon);
+                        if (_in[i, j]) _all.Add(p);
+                    }
+            }
+
+            public GridIndex(List<Pt> pts) { _xs = new double[0]; _ys = new double[0]; _in = new bool[0, 0]; _all.AddRange(pts); }
+
+            private static int Closest(double[] a, double v)
+            {
+                int k = Array.BinarySearch(a, v);
+                if (k >= 0) return k;
+                k = ~k;
+                if (k == 0) return 0;
+                if (k >= a.Length) return a.Length - 1;
+                return v - a[k - 1] <= a[k] - v ? k - 1 : k;
+            }
+
+            // jarak ke detector terdekat; kalau di sekitar sudah ada yang <= enough, langsung dipakai
+            public double Nearest(double x, double y, double enough)
+            {
+                double best = double.MaxValue;
+                if (_xs.Length > 0)
+                {
+                    int ci = Closest(_xs, x), cj = Closest(_ys, y);
+                    for (int i = Math.Max(0, ci - 2); i <= Math.Min(_xs.Length - 1, ci + 2); i++)
+                        for (int j = Math.Max(0, cj - 2); j <= Math.Min(_ys.Length - 1, cj + 2); j++)
+                            if (_in[i, j]) best = Math.Min(best, (_xs[i] - x) * (_xs[i] - x) + (_ys[j] - y) * (_ys[j] - y));
+                    if (best <= enough * enough) return Math.Sqrt(best);
+                }
+                foreach (var d in _all) best = Math.Min(best, (d.X - x) * (d.X - x) + (d.Y - y) * (d.Y - y));
+                return Math.Sqrt(best);
+            }
+        }
+
+        // titik sampel: grid di dalam space + titik di sepanjang boundary (pojok & dinding paling jauh dari detector)
+        private static List<Pt> Samples(double length, double width, List<List<Pt>> polygon, double step)
         {
             var res = new List<Pt>();
-            foreach (var z in zones) res.AddRange(z.Points);
-            return res;
-        }
-
-        /// <summary>
-        /// Area yang belum tercover dicoba digabung ke area bergrid yang menempel di sisinya (mis. jalur sempit 1 m
-        /// di sepanjang dinding): bentang grid area itu diperlebar sampai dinding area baru lalu grid-nya dihitung ulang.
-        /// Dipakai hanya kalau total detector lebih sedikit dan semua area tetap tercover 0.7 S.
-        /// </summary>
-        private static bool TryMerge(List<Zone> zones, Zone z, double S, List<List<Pt>> polygon)
-        {
-            const double tol = 0.05;
-            int own = z.Nx * z.Ny;
-            Zone best = null; double bx0 = 0, bx1 = 0, by0 = 0, by1 = 0; int bestGain = 0;
-            List<Pt> bestPts = null;
-            foreach (var p in zones)
-            {
-                if (p == z || p.Skipped || p.MergedInto != null || p.Points.Count == 0) continue;
-                bool inY = z.Y0 >= p.GY0 - tol && z.Y1 <= p.GY1 + tol;
-                bool inX = z.X0 >= p.GX0 - tol && z.X1 <= p.GX1 + tol;
-                double x0 = p.GX0, x1 = p.GX1, y0 = p.GY0, y1 = p.GY1;
-                if (inY && Math.Abs(z.X0 - p.GX1) < tol) x1 = z.X1;
-                else if (inY && Math.Abs(z.X1 - p.GX0) < tol) x0 = z.X0;
-                else if (inX && Math.Abs(z.Y0 - p.GY1) < tol) y1 = z.Y1;
-                else if (inX && Math.Abs(z.Y1 - p.GY0) < tol) y0 = z.Y0;
-                else continue;
-
-                var c = new Zone { X0 = p.X0, X1 = p.X1, Y0 = p.Y0, Y1 = p.Y1, GX0 = x0, GX1 = x1, GY0 = y0, GY1 = y1 };
-                FillGrid(c, S, polygon);
-                int gain = own + p.Points.Count - c.Points.Count;
-                if (gain <= bestGain) continue;
-
-                // cek ulang cakupan semua area dengan grid pengganti
-                var pts = new List<Pt>(c.Points);
-                foreach (var o in zones) if (o != p) pts.AddRange(o.Points);
-                bool ok = true;
-                foreach (var o in zones)
-                    if (!Covered(o, pts, 0.7 * S)) { ok = false; break; }
-                if (!ok) continue;
-                best = p; bestGain = gain; bestPts = c.Points;
-                bx0 = x0; bx1 = x1; by0 = y0; by1 = y1;
-            }
-            if (best == null) return false;
-            best.GX0 = bx0; best.GX1 = bx1; best.GY0 = by0; best.GY1 = by1;
-            best.Nx = Math.Max(1, (int)Math.Ceiling(best.GW / S - 1e-9));
-            best.Ny = Math.Max(1, (int)Math.Ceiling(best.GH / S - 1e-9));
-            best.Points = bestPts;
-            z.MergedInto = best;
-            z.Nx = z.Ny = 0;
-            return true;
-        }
-
-        // semua titik sampel di area berada dalam radius dari salah satu detector
-        private static bool Covered(Zone z, List<Pt> dets, double radius, List<List<Pt>> polygon = null)
-        {
-            // sampel tiap <= radius/8 supaya celah di tengah area besar juga terdeteksi
-            int nx = Math.Max(6, (int)Math.Ceiling(z.W / (radius / 8))), ny = Math.Max(6, (int)Math.Ceiling(z.H / (radius / 8)));
+            int nx = Math.Max(4, (int)Math.Ceiling(length / step)), ny = Math.Max(4, (int)Math.Ceiling(width / step));
             for (int i = 0; i <= nx; i++)
                 for (int j = 0; j <= ny; j++)
                 {
-                    double x = z.X0 + z.W * i / nx, y = z.Y0 + z.H * j / ny;
-                    if (polygon != null && !Inside(new Pt(x, y), polygon)) continue;
-                    bool ok = false;
-                    foreach (var d in dets)
-                        if ((d.X - x) * (d.X - x) + (d.Y - y) * (d.Y - y) <= radius * radius + 1e-9) { ok = true; break; }
-                    if (!ok) return false;
+                    var p = new Pt(length * i / nx, width * j / ny);
+                    if (polygon == null || Inside(p, polygon)) res.Add(p);
                 }
-            return true;
-        }
-
-        // koordinat unik vertex (dibulatkan 1 cm, sliver < 5 cm digabung)
-        private static List<double> Coords(List<List<Pt>> polygon, bool x)
-        {
-            var v = new List<double>();
-            foreach (var loop in polygon)
-                foreach (var p in loop) v.Add(Math.Round(x ? p.X : p.Y, 2));
-            v.Sort();
-            var res = new List<double>();
-            foreach (var c in v)
-                if (res.Count == 0 || c - res[res.Count - 1] > 0.05) res.Add(c);
+            if (polygon != null)
+                foreach (var loop in polygon)
+                    for (int i = 0; i < loop.Count; i++)
+                    {
+                        var a = loop[i]; var b = loop[(i + 1) % loop.Count];
+                        double len = Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+                        int n = Math.Max(1, (int)Math.Ceiling(len / step));
+                        for (int k = 0; k < n; k++)
+                            res.Add(new Pt(a.X + (b.X - a.X) * k / n, a.Y + (b.Y - a.Y) * k / n));
+                    }
             return res;
         }
 
