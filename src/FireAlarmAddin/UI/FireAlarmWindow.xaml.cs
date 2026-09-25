@@ -41,6 +41,8 @@ namespace FireAlarmAddin.UI
         {
             InitializeComponent();
             _geo = geo;
+            Icon = Icons.Detector(64);
+            HeaderIcon.Source = Icons.Detector(40);
 
             TxtSpaceName.Text = geo.Number + " - " + geo.Name;
             TxtSpaceInfo.Text = "Level: " + geo.LevelName;
@@ -133,7 +135,7 @@ namespace FireAlarmAddin.UI
                 "Arah lebar: ⌈" + F(_geo.Width) + " / " + F(r.DesignSpacing) + "⌉ = " + r.CountY +
                 "  → jarak " + F(r.ActualSpacingY) + " m, tepi " + F(r.ActualSpacingY / 2) + " m\n" +
                 "Grid " + r.CountX + " × " + r.CountY + " = " + (r.CountX * r.CountY) +
-                (r.Quantity != r.CountX * r.CountY ? " (" + r.Quantity + " di dalam boundary)" : "");
+                (r.Removed.Count > 0 ? "\n" + r.Removed.Count + " titik di luar boundary otomatis dihapus → " + r.Quantity + " unit" : "");
             TxtWarning.Text = r.Warning ?? "";
             DrawPreview();
         }
@@ -180,6 +182,14 @@ namespace FireAlarmAddin.UI
                 var dot = new Ellipse { Width = 12, Height = 12, Fill = new SolidColorBrush(Color.FromRgb(0xD3, 0x2F, 0x2F)), Stroke = Brushes.White, StrokeThickness = 2 };
                 Canvas.SetLeft(dot, c.X - 6); Canvas.SetTop(dot, c.Y - 6);
                 Preview.Children.Add(dot);
+            }
+            // titik yang dihapus (di luar boundary)
+            var grey = new SolidColorBrush(Color.FromRgb(0x9C, 0xA3, 0xAF));
+            foreach (var d in r.Removed)
+            {
+                var c = P(d.X, d.Y);
+                Line(new System.Windows.Point(c.X - 5, c.Y - 5), new System.Windows.Point(c.X + 5, c.Y + 5), grey, 2, false);
+                Line(new System.Windows.Point(c.X - 5, c.Y + 5), new System.Windows.Point(c.X + 5, c.Y - 5), grey, 2, false);
             }
             // dimension labels
             Label(F(_geo.Length) + " m", P(_geo.Length / 2, 0).X - 20, P(0, 0).Y + 6);

@@ -46,17 +46,19 @@ namespace FireAlarmAddin.Commands
 
                 if (win.Action == FireAlarmWindow.UserAction.Place)
                 {
-                    int n = Place(doc, geo, win.Result, win.CurrentSettings, out string err);
-                    TaskDialog.Show("Fire Alarm", err ?? n + " detector berhasil ditempatkan di space \"" + geo.Name + "\".");
+                    int n = Place(doc, space, geo, win.Result, win.CurrentSettings, out int skipped, out string err);
+                    TaskDialog.Show("Fire Alarm", err ?? n + " detector berhasil ditempatkan di space \"" + geo.Name + "\"." +
+                        (skipped > 0 ? "\n" + skipped + " titik di luar boundary space dilewati/dihapus." : ""));
                 }
                 if (win.Action == FireAlarmWindow.UserAction.Close) return Result.Succeeded;
                 // Place / PickAnother -> ulangi pilih space
             }
         }
 
-        private static int Place(Document doc, SpaceGeometry geo, CalcResult res, FireAlarmWindow.Settings s, out string error)
+        private static int Place(Document doc, Space space, SpaceGeometry geo, CalcResult res, FireAlarmWindow.Settings s,
+            out int skipped, out string error)
         {
-            error = null;
+            error = null; skipped = 0;
             var symbol = s.Symbol;
             if (symbol == null) { error = "Tidak ada family Fire Alarm Device yang dipilih / dimuat di project."; return 0; }
             var level = doc.GetElement(geo.LevelId) as Level;
@@ -79,6 +81,9 @@ namespace FireAlarmAddin.Commands
                     foreach (var p in res.Points)
                     {
                         var xyz = geo.ToWorld(p, s.Height);
+                        // cek ulang dengan geometri Revit (di dekat lantai, karena tinggi space bisa < tinggi detector)
+                        var test = new XYZ(xyz.X, xyz.Y, geo.LevelElevationFt + SpaceGeometry.ToFt(0.1));
+                        if (!space.IsPointInSpace(test)) { skipped++; continue; }
                         FamilyInstance fi;
                         if (plane != null)
                             fi = doc.Create.NewFamilyInstance(plane.GetReference(), xyz, XYZ.BasisX, symbol);

@@ -18,7 +18,8 @@ namespace FireAlarmAddin.Core
         public double DesignSpacing;     // S efektif (m)
         public int CountX, CountY;       // grid di bounding box
         public double ActualSpacingX, ActualSpacingY;
-        public List<Pt> Points = new List<Pt>(); // koordinat lokal (m) yang ada di dalam space
+        public List<Pt> Points = new List<Pt>();  // koordinat lokal (m) yang ada di dalam space
+        public List<Pt> Removed = new List<Pt>(); // titik grid di luar boundary (dihapus otomatis)
         public int Quantity => Points.Count;
         public string Warning;
     }
@@ -73,9 +74,28 @@ namespace FireAlarmAddin.Core
                     var p = new Pt(r.ActualSpacingX * (i + 0.5), r.ActualSpacingY * (j + 0.5));
                     if (polygon == null || polygon.Count == 0 || Inside(p, polygon))
                         r.Points.Add(p);
+                    else
+                        r.Removed.Add(p); // mis. bagian kosong pada space bentuk L
                 }
-            if (r.Points.Count == 0) r.Points.Add(new Pt(length / 2, width / 2));
+            if (r.Points.Count == 0) r.Points.Add(InteriorPoint(length, width, polygon));
             return r;
+        }
+
+        // titik cadangan yang pasti di dalam boundary (tengah bbox bisa di luar untuk bentuk L)
+        private static Pt InteriorPoint(double length, double width, List<List<Pt>> polygon)
+        {
+            var center = new Pt(length / 2, width / 2);
+            if (polygon == null || polygon.Count == 0 || Inside(center, polygon)) return center;
+            Pt best = center; double bestD = double.MaxValue;
+            const int n = 40;
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j < n; j++)
+                {
+                    var p = new Pt(length * (i + 0.5) / n, width * (j + 0.5) / n);
+                    double d = Math.Pow(p.X - center.X, 2) + Math.Pow(p.Y - center.Y, 2);
+                    if (d < bestD && Inside(p, polygon)) { best = p; bestD = d; }
+                }
+            return best;
         }
 
         // even-odd rule, mendukung lubang (loop dalam)
