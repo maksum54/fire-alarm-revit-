@@ -28,11 +28,14 @@ Add-in Revit 2025 untuk menghitung jumlah **smoke / heat detector** per **Space*
 Setiap push dibangun oleh GitHub Actions (**Actions → Build Revit 2025 Add-in → Artifacts**). Push tag `v*` (mis. `v1.0.0`) membuat Release berisi `FireAlarmAddin-Revit2025.zip`.
 
 ## Instalasi
-Ekstrak zip lalu jalankan `install.bat`, atau salin manual:
+Zip hanya berisi DLL dan `.addin` (tanpa `.bat`, supaya tidak diblokir browser). Ekstrak, lalu salin ke folder add-in Revit 2025
+(ketik `%APPDATA%\Autodesk\Revit\Addins\2025` di address bar Explorer):
 ```
 %APPDATA%\Autodesk\Revit\Addins\2025\FireAlarmAddin.addin
 %APPDATA%\Autodesk\Revit\Addins\2025\FireAlarmAddin\FireAlarmAddin.dll
 ```
+Sebelum disalin: klik kanan `FireAlarmAddin.dll` → Properties → centang **Unblock** (kalau ada). Buka ulang Revit.
+`install.bat` di repo ini tetap bisa dipakai: taruh di sebelah folder hasil ekstrak lalu jalankan.
 
 ## Build lokal
 Windows + .NET 8 SDK: `dotnet build src/FireAlarmAddin/FireAlarmAddin.csproj -c Release`
