@@ -9,6 +9,7 @@ Add-in Revit 2025 untuk menghitung jumlah **smoke / heat detector** per **Space*
 4. Isi **tinggi pemasangan** (default = tinggi space), pilih **Smoke** atau **Heat**.
 5. Jumlah detector, perhitungan, dan preview langsung update.
 6. **Tempatkan Detector di Model** (pilih family kategori *Fire Alarm Devices*) atau **Pilih Space Lain**.
+   Kalau space itu sudah berisi detector dari add-in ini (Comments `Smoke - ...` / `Heat - ...`), yang lama dihapus dan diganti, jadi tidak dobel. Device lain (bell, MCP, panel, atau detector yang ditaruh manual) tidak disentuh.
 
 ## Aturan perhitungan
 | Detector | S listed | Reduksi tinggi |
