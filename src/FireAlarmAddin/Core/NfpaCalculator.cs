@@ -94,10 +94,21 @@ namespace FireAlarmAddin.Core
 
             // otomatis: grid penuh vs grid bagian utama + detector tambahan di tonjolan sempit; pakai yang lebih sedikit
             var best = Layout(r, length, width, polygon, null, null, null);
-            var body = polygon == null ? null : ClipPockets(polygon, r.DesignSpacing / 2);
+            var keep = new List<Pt>(); var pockets = new List<Pt>();
+            var body = polygon == null ? null : ClipPockets(polygon, r.DesignSpacing / 2, keep, pockets);
             if (body != null)
             {
                 var alt = Layout(r, length, width, polygon, body, null, null);
+                // tonjolan yang lebih hemat bila tetap ikut grid (mis. sudah terjangkau kolom terluar) dikembalikan
+                foreach (var m in pockets)
+                {
+                    var keep2 = new List<Pt>(keep) { m };
+                    var body2 = ClipPockets(polygon, r.DesignSpacing / 2, keep2, new List<Pt>());
+                    if (body2 == null) continue;
+                    var alt2 = Layout(r, length, width, polygon, body2, null, null);
+                    if (alt2.Violations.Count > 0 || (alt.Violations.Count == 0 && alt2.Quantity >= alt.Quantity)) continue;
+                    alt = alt2; body = body2; keep = keep2;
+                }
                 if (alt.Violations.Count == 0 && alt.Quantity < best.Quantity) best = alt; else body = null;
             }
             if (manual.HasValue && manual.Value.Nx > 0 && manual.Value.Ny > 0 &&
@@ -179,7 +190,9 @@ namespace FireAlarmAddin.Core
         /// Boundary tanpa tonjolan sempit: ujung buntu (dua pojok siku berurutan) selebar &lt;= maxWidth dipotong
         /// sampai pangkalnya. Hanya loop terluar; null bila tidak ada yang dipotong.
         /// </summary>
-        private static List<List<Pt>> ClipPockets(List<List<Pt>> polygon, double maxWidth)
+        /// <param name="keep">tengah dinding ujung tonjolan yang tidak boleh dipotong</param>
+        /// <param name="found">diisi tengah dinding ujung tiap tonjolan yang dipotong</param>
+        private static List<List<Pt>> ClipPockets(List<List<Pt>> polygon, double maxWidth, List<Pt> keep, List<Pt> found)
         {
             double Area(List<Pt> l)
             {
@@ -207,6 +220,9 @@ namespace FireAlarmAddin.Core
                     // pangkal sisi yang lebih pendek harus pojok dalam (tonjolan menempel ke bagian utama)
                     bool atA = la <= ld + 0.01 && Turn(l0, i - 1) * sign < 0, atD = ld <= la + 0.01 && Turn(l0, i + 2) * sign < 0;
                     if (!atA && !atD) continue;
+                    var end = new Pt((b.X + c.X) / 2, (b.Y + c.Y) / 2);
+                    if (keep.Any(k => Dist(k, end) < 0.05)) continue;
+                    found.Add(end);
                     double depth = Math.Min(la, ld);
                     l0[i] = new Pt(b.X + (a.X - b.X) * depth / la, b.Y + (a.Y - b.Y) * depth / la);
                     l0[(i + 1) % n] = new Pt(c.X + (d.X - c.X) * depth / ld, c.Y + (d.Y - c.Y) * depth / ld);
