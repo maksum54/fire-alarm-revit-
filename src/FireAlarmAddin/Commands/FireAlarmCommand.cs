@@ -46,8 +46,9 @@ namespace FireAlarmAddin.Commands
 
                 if (win.Action == FireAlarmWindow.UserAction.Place)
                 {
-                    int n = Place(doc, space, geo, win.Result, win.CurrentSettings, out int skipped, out string err);
+                    int n = Place(doc, space, geo, win.Result, win.CurrentSettings, out int skipped, out int replaced, out string err);
                     TaskDialog.Show("Fire Alarm", err ?? n + " detector berhasil ditempatkan di space \"" + geo.Name + "\"." +
+                        (replaced > 0 ? "\n" + replaced + " detector lama di space ini dihapus dan diganti." : "") +
                         (skipped > 0 ? "\n" + skipped + " titik di luar boundary space dilewati/dihapus." : ""));
                 }
                 if (win.Action == FireAlarmWindow.UserAction.Close) return Result.Succeeded;
@@ -56,9 +57,9 @@ namespace FireAlarmAddin.Commands
         }
 
         private static int Place(Document doc, Space space, SpaceGeometry geo, CalcResult res, FireAlarmWindow.Settings s,
-            out int skipped, out string error)
+            out int skipped, out int replaced, out string error)
         {
-            error = null; skipped = 0;
+            error = null; skipped = 0; replaced = 0;
             var symbol = s.Symbol;
             if (symbol == null) { error = "Tidak ada family Fire Alarm Device yang dipilih / dimuat di project."; return 0; }
             var level = doc.GetElement(geo.LevelId) as Level;
@@ -68,6 +69,7 @@ namespace FireAlarmAddin.Commands
                 t.Start();
                 try
                 {
+                    replaced = RemoveExisting(doc, space, geo, s);
                     if (!symbol.IsActive) symbol.Activate();
                     var placement = symbol.Family.FamilyPlacementType;
                     ReferencePlane plane = null;
@@ -108,6 +110,40 @@ namespace FireAlarmAddin.Commands
                 }
             }
             return count;
+        }
+
+        /// <summary>
+        /// Hapus detector yang dulu ditempatkan add-in ini di space yang sama (Comments "Smoke - ..." / "Heat - ..."),
+        /// supaya menempatkan ulang tidak menumpuk. Fire alarm device lain (bell, MCP, panel) tidak disentuh.
+        /// </summary>
+        private static int RemoveExisting(Document doc, Space space, SpaceGeometry geo, FireAlarmWindow.Settings s)
+        {
+            double zTest = geo.LevelElevationFt + SpaceGeometry.ToFt(0.1);
+            double zMin = geo.LevelElevationFt - SpaceGeometry.ToFt(0.1);
+            double zMax = geo.LevelElevationFt + SpaceGeometry.ToFt(Math.Max(geo.DefaultHeight, s.Height) + 1.0);
+            var old = new List<ElementId>();
+            var planes = new HashSet<ElementId>();
+            foreach (var fi in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance))
+                .OfCategory(BuiltInCategory.OST_FireAlarmDevices).Cast<FamilyInstance>())
+            {
+                var mark = fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
+                if (!mark.StartsWith("Smoke - ") && !mark.StartsWith("Heat - ")) continue;
+                var pt = (fi.Location as LocationPoint)?.Point;
+                if (pt == null || pt.Z < zMin || pt.Z > zMax) continue; // lantai lain di posisi denah yang sama
+                if (!space.IsPointInSpace(new XYZ(pt.X, pt.Y, zTest))) continue;
+                old.Add(fi.Id);
+                if (fi.Host is ReferencePlane rp && rp.Name.StartsWith("FA ")) planes.Add(rp.Id);
+            }
+            if (old.Count == 0) return 0;
+            doc.Delete(old);
+            // reference plane buatan add-in yang sudah tidak dipakai detector lain
+            foreach (var id in planes)
+            {
+                var rp = doc.GetElement(id);
+                if (rp != null && rp.GetDependentElements(new ElementClassFilter(typeof(FamilyInstance))).Count == 0)
+                    doc.Delete(id);
+            }
+            return old.Count;
         }
 
         private class SpaceFilter : ISelectionFilter
