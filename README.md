@@ -20,6 +20,7 @@ Add-in Revit 2025 untuk menghitung jumlah **smoke / heat detector** per **Space*
 - Satu space = satu grid kolom × baris. Detector terluar **≤ ½ S dari setiap dinding** (termasuk dinding coakan/bentuk L), jarak antar detector **≤ S** (boleh lebih rapat, tidak boleh lebih jauh).
 - Sumbu dibagi di posisi dinding jadi ruas; tiap ruas `n = ⌈panjang ruas / S⌉`, jarak = panjang / n, tepi = setengahnya. Ruas digabung selama aturan ½ S / S tetap terpenuhi, jadi ruangan persegi tetap `⌈L/S⌉ × ⌈W/S⌉`. Titik potong di luar boundary dihapus.
 - Contoh ER1 35,95 × 30,05 m dengan coakan kanan atas, S = 9: kolom 4 × 8,99 m; baris 3 × 8,35 m (½ S dari dinding bawah & dinding coakan) + 1 baris untuk bagian kiri atas → 15 detector.
+- **Tonjolan sempit** (ujung buntu selebar ≤ ½ S, mis. ceruk 2 m di satu sisi) tidak lagi memaksa satu kolom/baris penuh: grid dihitung di bagian utama saja, lalu tonjolan yang belum terjangkau 0,7 S diberi detector sendiri (grid kecil `⌈sisi / S⌉` di tonjolan itu). Dipakai hanya bila totalnya lebih sedikit dari grid penuh dan seluruh space tetap dalam 0,7 S dari detector.
 - Jumlah kolom × baris bisa diatur manual (tombol − / +); pelanggaran ½ S / S ditampilkan merah.
 - Sumbu panjang mengikuti dinding terlurus terpanjang, jadi space yang miring tetap benar.
 - Nilai S bisa diubah di jendela sesuai data pabrikan.

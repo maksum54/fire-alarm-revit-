@@ -156,6 +156,9 @@ namespace FireAlarmAddin.UI
             sb.Append("Baris (y): " + Segments(r.SegmentsY, r.DesignSpacing) + "\n");
             sb.Append("Grid " + r.CountX + " × " + r.CountY + " = " + (r.CountX * r.CountY));
             if (r.Removed.Count > 0) sb.Append(", " + r.Removed.Count + " titik di luar boundary dihapus");
+            if (r.GridArea != null)
+                sb.Append("\nTonjolan sempit (≤ ½ S) di luar grid: + " + r.Extras.Count + " detector tambahan" +
+                    (r.Extras.Count == 0 ? " (sudah dalam jangkauan 0.7 S)" : ""));
             sb.Append("\nJarak terjauh ke detector = " + F(r.MaxDistance) + " m");
             sb.Append("\nTotal = " + r.Quantity + " unit");
             return sb.ToString();
@@ -248,11 +251,12 @@ namespace FireAlarmAddin.UI
             var gridBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0x9A, 0x9A));
             // garis kolom & baris grid (lurus menerus di seluruh space)
             // hanya bagian garis yang ada di dalam space
+            var gridArea = r.GridArea ?? _geo.LocalLoops;
             foreach (var x in r.LinesX)
-                foreach (var iv in NfpaCalculator.Crossings(x, true, _geo.LocalLoops, _geo.Length, _geo.Width))
+                foreach (var iv in NfpaCalculator.Crossings(x, true, gridArea, _geo.Length, _geo.Width))
                     Line(P(x, iv.A), P(x, iv.B), gridBrush, 0.8, true);
             foreach (var y in r.LinesY)
-                foreach (var iv in NfpaCalculator.Crossings(y, false, _geo.LocalLoops, _geo.Length, _geo.Width))
+                foreach (var iv in NfpaCalculator.Crossings(y, false, gridArea, _geo.Length, _geo.Width))
                     Line(P(iv.A, y), P(iv.B, y), gridBrush, 0.8, true);
 
             // coverage + detectors
